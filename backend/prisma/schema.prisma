@@ -1,0 +1,541 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model ai_generations {
+  id           Int           @id @default(autoincrement())
+  user_id      Int
+  document_id  BigInt?
+  template_id  Int?
+  action       String        @db.VarChar(50)
+  input_text   String?
+  output_text  String?
+  model        String?       @db.VarChar(50)
+  tokens_used  Int?
+  cost         Decimal?      @db.Decimal(10, 6)
+  created_at   DateTime      @default(now()) @db.Timestamp(6)
+  documents    documents?    @relation(fields: [document_id], references: [id], onUpdate: NoAction)
+  ai_templates ai_templates? @relation(fields: [template_id], references: [id], onUpdate: NoAction)
+  users        users         @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  ai_usages    ai_usages[]
+
+  @@index([action], map: "idx_ai_generations_action")
+  @@index([user_id, created_at], map: "idx_ai_generations_user_created")
+}
+
+model ai_quotas {
+  user_id         Int      @id
+  daily_limit     Int      @default(50)
+  used_today      Int      @default(0)
+  last_reset_date DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  users           users    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model ai_templates {
+  id                   Int              @id @default(autoincrement())
+  name                 String           @db.VarChar(100)
+  description          String?
+  system_prompt        String
+  user_prompt_template String
+  language             String           @default("FR") @db.VarChar(10)
+  tone                 String           @default("professionnel") @db.VarChar(20)
+  length               String           @default("moyen") @db.VarChar(20)
+  is_custom            Int              @default(0) @db.SmallInt
+  created_by           Int
+  created_at           DateTime         @default(now()) @db.Timestamp(6)
+  ai_generations       ai_generations[]
+  users                users            @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model ai_usages {
+  id             Int             @id @default(autoincrement())
+  user_id        Int
+  action         String          @db.VarChar(50)
+  model          String?         @db.VarChar(50)
+  tokens         Int             @default(0)
+  cost           Decimal         @default(0) @db.Decimal(10, 6)
+  generation_id  Int?
+  created_at     DateTime        @default(now()) @db.Timestamp(6)
+  ai_generations ai_generations? @relation(fields: [generation_id], references: [id], onUpdate: NoAction)
+  users          users           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id, created_at], map: "idx_ai_usages_user_created")
+}
+
+model app_settings {
+  key        String   @id @db.VarChar(100)
+  value      String
+  updated_at DateTime @default(now()) @db.Timestamp(6)
+}
+
+model archiving_rules {
+  id                 Int      @id @default(autoincrement())
+  name               String   @db.VarChar(100)
+  condition_field    String   @db.VarChar(50)
+  condition_operator String   @db.VarChar(10)
+  condition_value    String?  @db.VarChar(255)
+  days_inactive      Int?     @default(30)
+  is_active          Int      @default(1) @db.SmallInt
+  created_at         DateTime @default(now()) @db.Timestamp(6)
+}
+
+model audit_logs {
+  id          Int      @id @default(autoincrement())
+  user_id     Int?
+  action      String   @db.VarChar(100)
+  entity_type String?  @db.VarChar(50)
+  entity_id   String?  @db.VarChar(100)
+  old_values  Json?
+  new_values  Json?
+  ip_address  String?  @db.VarChar(45)
+  user_agent  String?
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+  users       users?   @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model custom_fields {
+  id                     Int                      @id @default(autoincrement())
+  name                   String                   @db.VarChar(100)
+  type                   String                   @db.VarChar(20)
+  options                Json?
+  document_type          String?                  @db.VarChar(100)
+  is_active              Int                      @default(1) @db.SmallInt
+  created_at             DateTime                 @default(now()) @db.Timestamp(6)
+  document_custom_values document_custom_values[]
+}
+
+model departments {
+  id               Int                @id @default(autoincrement())
+  name             String             @db.VarChar(100)
+  description      String?
+  created_at       DateTime           @default(now()) @db.Timestamp(6)
+  user_departments user_departments[]
+}
+
+model document_comments {
+  id          BigInt    @id @default(autoincrement())
+  document_id BigInt
+  user_id     Int
+  comment     String
+  created_at  DateTime  @default(now()) @db.Timestamp(6)
+  updated_at  DateTime  @default(now()) @db.Timestamp(6)
+  documents   documents @relation(fields: [document_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users       users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([document_id], map: "idx_document_comments_document")
+}
+
+model document_custom_values {
+  id            BigInt        @id @default(autoincrement())
+  document_id   BigInt
+  field_id      Int
+  value         String?
+  documents     documents     @relation(fields: [document_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  custom_fields custom_fields @relation(fields: [field_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([document_id, field_id])
+}
+
+model document_embeddings {
+  document_id BigInt                @id
+  embedding   Unsupported("vector")
+  updated_at  DateTime              @default(now()) @db.Timestamptz(6)
+  documents   documents             @relation(fields: [document_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([embedding], map: "idx_document_embeddings_hnsw")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model document_shares {
+  id                                               Int       @id @default(autoincrement())
+  document_id                                      BigInt
+  shared_with_user_id                              Int?
+  shared_with_role_id                              Int?
+  permission                                       String    @default("view") @db.VarChar(20)
+  start_date                                       DateTime  @default(now()) @db.Timestamp(6)
+  end_date                                         DateTime? @db.Timestamp(6)
+  created_by                                       Int
+  created_at                                       DateTime  @default(now()) @db.Timestamp(6)
+  revoked                                          Int       @default(0) @db.SmallInt
+  users_document_shares_created_byTousers          users     @relation("document_shares_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  documents                                        documents @relation(fields: [document_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  roles                                            roles?    @relation(fields: [shared_with_role_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_document_shares_shared_with_user_idTousers users?    @relation("document_shares_shared_with_user_idTousers", fields: [shared_with_user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([document_id], map: "idx_ds_document")
+  @@index([revoked], map: "idx_ds_revoked")
+  @@index([shared_with_role_id], map: "idx_ds_role")
+  @@index([shared_with_user_id], map: "idx_ds_user")
+}
+
+model document_versions {
+  id             BigInt    @id @default(autoincrement())
+  document_id    BigInt
+  version_number Int
+  file_path      String    @db.VarChar(500)
+  size           BigInt
+  created_by     Int
+  comment        String?   @db.VarChar(500)
+  created_at     DateTime  @default(now()) @db.Timestamp(6)
+  users          users     @relation(fields: [created_by], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  documents      documents @relation(fields: [document_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([document_id, version_number])
+  @@index([document_id], map: "idx_document_versions_document")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model documents {
+  id                     BigInt                   @id @default(autoincrement())
+  title                  String                   @db.VarChar(255)
+  original_name          String                   @db.VarChar(255)
+  file_path              String                   @db.VarChar(500)
+  mime_type              String                   @db.VarChar(150)
+  size                   BigInt
+  owner_id               Int
+  category               String?                  @default("General") @db.VarChar(120)
+  status                 String?                  @default("active") @db.VarChar(50)
+  tags                   String?
+  description            String?
+  created_at             DateTime                 @default(now()) @db.Timestamp(6)
+  updated_at             DateTime                 @default(now()) @db.Timestamp(6)
+  extracted_text         String?
+  deleted_at             DateTime?                @db.Timestamp(6)
+  visibility             String                   @default("private") @db.VarChar(20)
+  watermark_enabled      Int                      @default(0) @db.SmallInt
+  embedding_json         Json?
+  embedding_updated_at   DateTime?                @db.Timestamp(6)
+  ai_generations         ai_generations[]
+  document_comments      document_comments[]
+  document_custom_values document_custom_values[]
+  document_embeddings    document_embeddings?
+  document_shares        document_shares[]
+  document_versions      document_versions[]
+  users                  users                    @relation(fields: [owner_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  preview_tokens         preview_tokens[]
+  public_links           public_links[]
+  upload_request_files   upload_request_files[]
+  upload_requests        upload_requests[]
+
+  @@index([deleted_at], map: "idx_deleted_at")
+  @@index([category], map: "idx_documents_category")
+  @@index([created_at], map: "idx_documents_created_at")
+  @@index([owner_id], map: "idx_documents_owner")
+  @@index([status], map: "idx_documents_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model link_access_logs {
+  id           Int          @id @default(autoincrement())
+  link_id      Int
+  ip_address   String?      @db.VarChar(45)
+  user_agent   String?
+  action       String       @default("view") @db.VarChar(20)
+  accessed_at  DateTime     @default(now()) @db.Timestamp(6)
+  public_links public_links @relation(fields: [link_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([accessed_at], map: "idx_link_logs_accessed")
+  @@index([link_id], map: "idx_link_logs_link")
+}
+
+model login_attempts {
+  id              BigInt    @id @default(autoincrement())
+  email           String    @unique(map: "uq_login_attempts_email") @db.VarChar(180)
+  attempt_count   Int       @default(0)
+  locked_until    DateTime? @db.Timestamp(6)
+  last_ip         String?   @db.VarChar(64)
+  last_attempt_at DateTime  @default(now()) @db.Timestamp(6)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model notification_preferences {
+  user_id        Int
+  type           String @db.VarChar(40)
+  email_enabled  Int    @default(1) @db.SmallInt
+  in_app_enabled Int    @default(1) @db.SmallInt
+  users          users  @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([user_id, type])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model notifications {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  type       String   @db.VarChar(40)
+  title      String   @db.VarChar(255)
+  message    String
+  link       String?  @db.VarChar(500)
+  is_read    Int      @default(0) @db.SmallInt
+  created_at DateTime @default(now()) @db.Timestamp(6)
+  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([created_at], map: "idx_created")
+  @@index([user_id, is_read], map: "idx_user_unread")
+}
+
+model password_resets {
+  id         BigInt    @id @default(autoincrement())
+  user_id    Int
+  token_hash String    @db.VarChar(255)
+  expires_at DateTime  @db.Timestamp(6)
+  created_at DateTime  @default(now()) @db.Timestamp(6)
+  used_at    DateTime? @db.Timestamp(6)
+  email      String    @db.VarChar(180)
+  users      users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([email], map: "idx_password_resets_email")
+  @@index([token_hash], map: "idx_password_resets_token_hash")
+}
+
+model permissions {
+  id               Int                @id @default(autoincrement())
+  name             String             @unique @db.VarChar(100)
+  description      String?            @db.VarChar(255)
+  created_at       DateTime           @default(now()) @db.Timestamp(6)
+  role_permissions role_permissions[]
+}
+
+model preview_tokens {
+  id          BigInt    @id @default(autoincrement())
+  document_id BigInt
+  token       String    @unique @db.Char(64)
+  expires_at  DateTime  @db.Timestamp(6)
+  created_at  DateTime  @default(now()) @db.Timestamp(6)
+  documents   documents @relation(fields: [document_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([document_id], map: "idx_preview_tokens_document")
+  @@index([expires_at], map: "idx_preview_tokens_expires")
+}
+
+model public_links {
+  id               Int                @id @default(autoincrement())
+  document_id      BigInt
+  token            String             @unique @db.VarChar(255)
+  password_hash    String?            @db.VarChar(255)
+  allow_download   Int                @default(1) @db.SmallInt
+  expires_at       DateTime?          @db.Timestamp(6)
+  created_by       Int
+  created_at       DateTime           @default(now()) @db.Timestamp(6)
+  revoked          Int                @default(0) @db.SmallInt
+  link_access_logs link_access_logs[]
+  users            users              @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  documents        documents          @relation(fields: [document_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([document_id], map: "idx_public_links_document")
+  @@index([revoked], map: "idx_public_links_revoked")
+}
+
+model refresh_tokens {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  token      String   @db.VarChar(500)
+  expires_at DateTime @db.Timestamp(6)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([token], map: "idx_refresh_tokens_token")
+}
+
+model role_permissions {
+  role_id       Int
+  permission_id Int
+  created_at    DateTime    @default(now()) @db.Timestamp(6)
+  permissions   permissions @relation(fields: [permission_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  roles         roles       @relation(fields: [role_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([role_id, permission_id])
+}
+
+model roles {
+  id               Int                @id @default(autoincrement())
+  name             String             @unique @db.VarChar(50)
+  description      String?            @db.VarChar(255)
+  created_at       DateTime           @default(now()) @db.Timestamp(6)
+  document_shares  document_shares[]
+  role_permissions role_permissions[]
+  user_roles       user_roles[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model upload_request_files {
+  id                     Int             @id @default(autoincrement())
+  request_id             Int
+  original_name          String          @db.VarChar(255)
+  file_path              String          @db.VarChar(500)
+  size                   BigInt
+  mime_type              String?         @db.VarChar(150)
+  uploaded_by_ip         String?         @db.VarChar(45)
+  uploaded_by_email      String?         @db.VarChar(255)
+  comment                String?
+  status                 String          @default("pending") @db.VarChar(30)
+  reviewer_comment       String?
+  uploaded_at            DateTime        @default(now()) @db.Timestamp(6)
+  reviewed_at            DateTime?       @db.Timestamp(6)
+  reviewed_by            Int?
+  integrated_document_id BigInt?
+  documents              documents?      @relation(fields: [integrated_document_id], references: [id], onUpdate: NoAction)
+  upload_requests        upload_requests @relation(fields: [request_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                  users?          @relation(fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([request_id], map: "idx_urf_request")
+  @@index([status], map: "idx_urf_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model upload_requests {
+  id                   Int                    @id @default(autoincrement())
+  token                String                 @unique @db.VarChar(255)
+  created_by           Int
+  target_document_id   BigInt?
+  allowed_mime_types   Json?
+  max_size_bytes       Int                    @default(10485760)
+  max_files            Int                    @default(5)
+  expires_at           DateTime?              @db.Timestamp(6)
+  password_hash        String?                @db.VarChar(255)
+  status               String                 @default("active") @db.VarChar(20)
+  notification_email   String?                @db.VarChar(255)
+  created_at           DateTime               @default(now()) @db.Timestamp(6)
+  upload_request_files upload_request_files[]
+  users                users                  @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  documents            documents?             @relation(fields: [target_document_id], references: [id], onUpdate: NoAction)
+
+  @@index([created_by], map: "idx_upload_requests_created_by")
+  @@index([status], map: "idx_upload_requests_status")
+}
+
+model user_2fa_codes {
+  id            Int      @id @default(autoincrement())
+  user_id       Int
+  code          String   @db.VarChar(6)
+  session_token String   @db.VarChar(255)
+  expires_at    DateTime @db.Timestamp(6)
+  used          Int      @default(0) @db.SmallInt
+  created_at    DateTime @default(now()) @db.Timestamp(6)
+  users         users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([session_token], map: "idx_session_token")
+}
+
+model user_departments {
+  user_id       Int
+  department_id Int
+  departments   departments @relation(fields: [department_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users         users       @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([user_id, department_id])
+}
+
+model user_roles {
+  user_id    Int
+  role_id    Int
+  created_at DateTime @default(now()) @db.Timestamp(6)
+  roles      roles    @relation(fields: [role_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([user_id, role_id])
+}
+
+model users {
+  id                                                         Int                        @id @default(autoincrement())
+  full_name                                                  String                     @db.VarChar(120)
+  email                                                      String                     @unique @db.VarChar(180)
+  password_hash                                              String                     @db.VarChar(255)
+  is_active                                                  Int                        @default(1) @db.SmallInt
+  created_at                                                 DateTime                   @default(now()) @db.Timestamp(6)
+  updated_at                                                 DateTime                   @default(now()) @db.Timestamp(6)
+  last_login_at                                              DateTime?                  @db.Timestamp(6)
+  is_locked                                                  Int                        @default(0) @db.SmallInt
+  lock_expires_at                                            DateTime?                  @db.Timestamp(6)
+  locale                                                     String                     @default("fr") @db.VarChar(10)
+  theme_pref                                                 String                     @default("light") @db.VarChar(20)
+  avatar_path                                                String?                    @db.VarChar(500)
+  ai_generations                                             ai_generations[]
+  ai_quotas                                                  ai_quotas?
+  ai_templates                                               ai_templates[]
+  ai_usages                                                  ai_usages[]
+  audit_logs                                                 audit_logs[]
+  document_comments                                          document_comments[]
+  document_shares_document_shares_created_byTousers          document_shares[]          @relation("document_shares_created_byTousers")
+  document_shares_document_shares_shared_with_user_idTousers document_shares[]          @relation("document_shares_shared_with_user_idTousers")
+  document_versions                                          document_versions[]
+  documents                                                  documents[]
+  notification_preferences                                   notification_preferences[]
+  notifications                                              notifications[]
+  password_resets                                            password_resets[]
+  public_links                                               public_links[]
+  refresh_tokens                                             refresh_tokens[]
+  upload_request_files                                       upload_request_files[]
+  upload_requests                                            upload_requests[]
+  user_2fa_codes                                             user_2fa_codes[]
+  user_departments                                           user_departments[]
+  user_roles                                                 user_roles[]
+}
+
+model workflow_actions {
+  id                 BigInt             @id @default(autoincrement())
+  instance_id        BigInt
+  step_id            BigInt?
+  actor_id           Int?
+  action             String             @db.VarChar(40)
+  comment            String?
+  created_at         DateTime           @default(now()) @db.Timestamp(6)
+  workflow_instances workflow_instances @relation(fields: [instance_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  workflow_steps     workflow_steps?    @relation(fields: [step_id], references: [id], onUpdate: NoAction)
+}
+
+model workflow_instances {
+  id                BigInt             @id @default(autoincrement())
+  document_id       BigInt
+  workflow_id       BigInt
+  current_step_id   BigInt?
+  current_node_id   String?            @db.VarChar(80)
+  visual_state_json Json?
+  is_visual         Int                @default(0) @db.SmallInt
+  status            String             @default("pending") @db.VarChar(40)
+  started_at        DateTime           @default(now()) @db.Timestamp(6)
+  completed_at      DateTime?          @db.Timestamp(6)
+  due_date          DateTime?          @db.Timestamp(6)
+  reminder_sent_at  DateTime?          @db.Timestamp(6)
+  workflow_actions  workflow_actions[]
+  workflow_steps    workflow_steps?    @relation(fields: [current_step_id], references: [id], onUpdate: NoAction)
+  workflows         workflows          @relation(fields: [workflow_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([document_id], map: "idx_workflow_instances_document")
+  @@index([status, due_date], map: "idx_workflow_instances_due_date")
+}
+
+model workflow_steps {
+  id                 BigInt               @id @default(autoincrement())
+  workflow_id        BigInt
+  step_order         Int
+  assignee_type      String               @db.VarChar(20)
+  assignee_id        Int
+  due_hours          Int?                 @default(0)
+  reminder_hours     Int?                 @default(0)
+  created_at         DateTime             @default(now()) @db.Timestamp(6)
+  workflow_actions   workflow_actions[]
+  workflow_instances workflow_instances[]
+  workflows          workflows            @relation(fields: [workflow_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([workflow_id, step_order], map: "idx_workflow_steps_order")
+}
+
+model workflows {
+  id                 BigInt               @id @default(autoincrement())
+  name               String               @db.VarChar(180)
+  description        String?
+  document_category  String?              @db.VarChar(120)
+  visual_definition  Json?
+  is_visual          Int                  @default(0) @db.SmallInt
+  created_at         DateTime             @default(now()) @db.Timestamp(6)
+  workflow_instances workflow_instances[]
+  workflow_steps     workflow_steps[]
+}

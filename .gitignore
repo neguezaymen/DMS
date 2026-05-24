@@ -1,0 +1,27 @@
+# Node
+node_modules/
+.env
+.env.local
+.env.production
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Base de données locale (si fichier)
+*.sqlite
+*.db
+
+# Uploads (ne pas versionner les fichiers uploadés)
+backend/uploads/
+frontend/dist/
+frontend/.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

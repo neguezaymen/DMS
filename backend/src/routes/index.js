@@ -1,0 +1,43 @@
+const express = require("express");
+const authRoutes = require("../modules/auth/auth.routes");
+const userRoutes = require("../modules/users/users.routes");
+const adminUserRoutes = require("../modules/users/admin-users.routes");
+const documentRoutes = require("../modules/documents/documents.routes");
+const documentCommentsRoutes = require("../modules/documents/document-comments.routes");
+const workflowRoutes = require("../modules/workflows/workflows.routes");
+const auditRoutes = require("../modules/audit/audit.routes");
+const departmentsRoutes = require("../modules/departments/departments.routes");
+const customFieldsRoutes = require("../modules/custom-fields/custom-fields.routes");
+const archivingRoutes = require("../modules/archiving/archiving.routes");
+const adminSettingsRoutes = require("../modules/settings/admin-settings.routes");
+const settingsPublicRoutes = require("../modules/settings/settings.public.routes");
+const rolesRoutes = require("../modules/roles/roles.routes");
+const publicLinkPublicRoutes = require("../modules/documents/public-link.public.routes");
+const publicUploadRequestRoutes = require("../modules/upload-requests/upload-request.public.routes");
+const uploadRequestsRoutes = require("../modules/upload-requests/upload-requests.routes");
+const notificationsRoutes = require("../modules/notifications/notifications.routes");
+const aiRoutes = require("../modules/ai/ai.routes");
+const { authenticate } = require("../middlewares/auth");
+
+const router = express.Router();
+
+router.use("/public-links", publicLinkPublicRoutes);
+router.use("/request-upload", publicUploadRequestRoutes);
+router.use("/upload-requests", authenticate, uploadRequestsRoutes);
+router.use("/notifications", notificationsRoutes);
+router.use("/ai-studio", authenticate, aiRoutes);
+router.use("/auth", authRoutes);
+router.use("/users", userRoutes);
+router.use("/admin/users", adminUserRoutes);
+router.use("/documents", documentRoutes);
+router.use("/comments", authenticate, documentCommentsRoutes);
+router.use("/workflows", workflowRoutes);
+router.use("/audit-logs", auditRoutes);
+router.use("/departments", departmentsRoutes);
+router.use("/custom-fields", customFieldsRoutes);
+router.use("/admin/archiving-rules", archivingRoutes);
+router.use("/admin/settings", adminSettingsRoutes);
+router.use("/settings", settingsPublicRoutes);
+router.use("/roles", rolesRoutes);
+
+module.exports = router;
