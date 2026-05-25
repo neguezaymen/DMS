@@ -81,9 +81,8 @@ function auditLogsSelectSql(whereClause) {
        LEFT JOIN documents d
          ON al.entity_type = 'document'
         AND al.entity_id IS NOT NULL
-        AND CHAR_LENGTH(TRIM(COALESCE(al.entity_id, ''))) > 0
-        AND TRIM(al.entity_id) REGEXP '^[0-9]+$'
-        AND d.id = CAST(TRIM(al.entity_id) AS UNSIGNED)
+        AND TRIM(COALESCE(al.entity_id, '')) <> ''
+        AND d.id::text = TRIM(al.entity_id)
        ${whereClause}`;
 }
 
