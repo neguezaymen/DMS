@@ -183,6 +183,30 @@ const FACTURE_LINES = [
   { text: "Document genere automatiquement - demo DMS.", size: 9, spacing: 1.4 },
 ];
 
+const CANDIDATURE_LINES = [
+  { text: "DOSSIER DE CANDIDATURE", size: 16, bold: true, spacing: 2.2 },
+  { text: "Poste : Stage developpement full-stack — WebSolutions", size: 11, bold: true, spacing: 2 },
+  { text: "Candidat : Jean Dupont", size: 12, bold: true, spacing: 1.6 },
+  { text: "Email : jean.dupont@email.fr — Tel : +33 6 12 34 56 78", spacing: 1.4 },
+  { text: "Formation : Master Informatique — ISAMM", spacing: 1.4 },
+  { text: "Disponibilite : fevrier 2025 — duree 6 mois", spacing: 2.2 },
+  { text: "Competences techniques", size: 11, bold: true, spacing: 1.6 },
+  { text: "React, TypeScript, Node.js, PostgreSQL, Git, REST API", spacing: 1.45 },
+  { text: "Experiences", size: 11, bold: true, spacing: 1.6 },
+  { text: "Projet PFE : plateforme DMS avec workflows et recherche IA.", spacing: 1.45 },
+  { text: "Stage ete 2024 : developpement frontend chez une ESN tunisienne.", spacing: 2.2 },
+  { text: "Motivation", size: 11, bold: true, spacing: 1.6 },
+  {
+    text: "Je souhaite rejoindre WebSolutions pour contribuer a des solutions",
+    spacing: 1.45,
+  },
+  {
+    text: "documentaires innovantes et approfondir mes competences en equipe agile.",
+    spacing: 2.2,
+  },
+  { text: "Document genere pour demo workflow candidature — DMS.", size: 9, spacing: 1.4 },
+];
+
 const LETTRE_LINES = [
   { text: "Syrine Mabrouk", size: 12, bold: true, spacing: 1.6 },
   { text: "12 Avenue Mohamed V, 1002 Tunis", spacing: 1.4 },
@@ -292,6 +316,7 @@ const BUILDERS = {
   "Rapport_Stage_Sahar_Neguez.pdf": () => buildPdf(RAPPORT_STAGE_LINES),
   "Facture_ATTIJARI_BANK.pdf": () => buildPdf(FACTURE_LINES),
   "Lettre_Motivation_Syrine.pdf": () => buildPdf(LETTRE_LINES),
+  "Dossier_Candidature_Dupont.pdf": () => buildPdf(CANDIDATURE_LINES),
   "Devis_Commercial_TELNET.pdf": () => buildPdf(DEVIS_LINES),
   "Contrat_Alternance_2025.docx": () => buildDocx(CONTRAT_PARAGRAPHS),
 };

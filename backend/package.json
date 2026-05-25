@@ -9,6 +9,7 @@
     "test": "cross-env NODE_ENV=test jest --runInBand",
     "db:init": "node scripts/init-db.js",
     "db:seed": "node scripts/seed.js",
+    "db:seed-candidature": "node scripts/seed-candidature-workflow.js",
     "db:demo-docs": "node scripts/seed-demo-documents.js",
     "db:setup": "node scripts/init-db.js && node scripts/seed.js",
     "db:pull": "prisma db pull",

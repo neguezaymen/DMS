@@ -5,7 +5,6 @@ import {
   Archive,
   Download,
   Eye,
-  Mic,
   Search,
   Sparkles,
   Trash2,
@@ -23,7 +22,6 @@ import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { Label } from '@/components/shadcn/label'
 import { Textarea } from '@/components/shadcn/textarea'
-import { Checkbox } from '@/components/shadcn/checkbox'
 import {
   Select,
   SelectContent,
@@ -34,9 +32,8 @@ import {
 import { Separator } from '@/components/shadcn/separator'
 import DataTable, { type DataTableColumn } from '../components/ui/DataTable'
 import { useToast } from '../state/ToastContext'
-import { statusBadgeClass, statusLabel, tagChipClass } from '../utils/documentUi'
+import { statusBadgeClass, statusLabel, tagChipClass, mergeDocumentCategories, DEFAULT_DOCUMENT_CATEGORY, DOCUMENT_CATEGORY_PRESETS } from '../utils/documentUi'
 import { cn } from '@/lib/utils'
-import i18n from '../i18n'
 
 function parseCustomFieldOptions(options: any) {
   if (Array.isArray(options)) return options
@@ -52,6 +49,16 @@ function parseCustomFieldOptions(options: any) {
   }
 }
 
+const DOCUMENT_FILTER_STATUSES = [
+  'active',
+  'pending_approval',
+  'draft',
+  'in_review',
+  'approved',
+  'archived',
+  'rejected',
+] as const
+
 export default function DocumentsListPage() {
   const { t } = useTranslation()
   const [searchParams] = useSearchParams()
@@ -59,7 +66,6 @@ export default function DocumentsListPage() {
   const toast = useToast()
   const [documents, setDocuments] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
@@ -74,36 +80,24 @@ export default function DocumentsListPage() {
     }
   })
   const [departments, setDepartments] = useState<any[]>([])
+  const [categories, setCategories] = useState<string[]>(() =>
+    mergeDocumentCategories([...DOCUMENT_CATEGORY_PRESETS]),
+  )
   const [maxUploadBytes, setMaxUploadBytes] = useState(10 * 1024 * 1024)
   const [meta, setMeta] = useState({
     title: '',
-    category: 'Général',
+    category: DEFAULT_DOCUMENT_CATEGORY,
     visibility: 'private',
     tags: '',
     description: '',
   })
   const [pendingDocs, setPendingDocs] = useState<any[]>([])
-  const [aiSuggestLoading, setAiSuggestLoading] = useState(false)
-  const [aiSuggestion, setAiSuggestion] = useState<string | null>(null)
-  const [naturalPhrase, setNaturalPhrase] = useState('')
-  const [naturalLoading, setNaturalLoading] = useState(false)
-  const [, setTotal] = useState(0)
-  const [voiceListening, setVoiceListening] = useState(false)
-  const [workflowHint, setWorkflowHint] = useState<any>(null)
   const [customFields, setCustomFields] = useState<any[]>([])
   const [customValues, setCustomValues] = useState<Record<string, string>>({})
-  const [selectedForReport, setSelectedForReport] = useState<number[]>([])
-  const [reportLoading, setReportLoading] = useState(false)
-  const [similarDocId, setSimilarDocId] = useState('')
-  const [similarLoading, setSimilarLoading] = useState(false)
-  const [similarDocs, setSimilarDocs] = useState<any[]>([])
-  const [qaQuestion, setQaQuestion] = useState('')
-  const [qaLoading, setQaLoading] = useState(false)
   const [docDownloadId, setDocDownloadId] = useState<number | null>(null)
-  const [qaAnswer, setQaAnswer] = useState('')
-  const [vectorQuery, setVectorQuery] = useState('')
-  const [vectorLoading, setVectorLoading] = useState(false)
-  const [vectorMode, setVectorMode] = useState('')
+  const [smartQuery, setSmartQuery] = useState('')
+  const [smartLoading, setSmartLoading] = useState(false)
+  const [smartMode, setSmartMode] = useState('')
 
   const loadPending = async () => {
     if (!isAdmin) {
@@ -163,11 +157,14 @@ export default function DocumentsListPage() {
   useEffect(() => {
     const boot = async () => {
       try {
-        const [depts, pub] = await Promise.all([
+        const [depts, pub, cats] = await Promise.all([
           api.get('/departments').catch(() => ({ data: { data: [] } })),
           api.get('/settings/public').catch(() => ({ data: { data: {} } })),
+          api.get('/documents/categories').catch(() => ({ data: { data: [] } })),
         ])
         setDepartments(depts.data.data || [])
+        const catList = Array.isArray(cats.data?.data) ? cats.data.data : []
+        setCategories(mergeDocumentCategories([...DOCUMENT_CATEGORY_PRESETS, ...catList]))
         const mb = Number(pub.data?.data?.maxUploadSizeBytes)
         if (Number.isFinite(mb) && mb > 0) setMaxUploadBytes(mb)
       } catch {
@@ -218,40 +215,6 @@ export default function DocumentsListPage() {
       return
     }
     try {
-      const first = selectedFiles[0]
-      if (first) {
-        try {
-          const fd = new FormData()
-          fd.append('file', first)
-          const hint = await api.post('/ai-studio/workflow-suggest-upload', fd, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-          })
-          setWorkflowHint(hint.data.data || null)
-        } catch {
-          setWorkflowHint(null)
-        }
-      }
-
-      if (first) {
-        try {
-          const fdCheck = new FormData()
-          fdCheck.append('file', first)
-          const dup = await api.post('/ai-studio/deduplicate-upload-check', fdCheck, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-          })
-          const similar = dup.data?.data?.similar || []
-          if (similar.length > 0) {
-            const top = similar[0]
-            const proceed = window.confirm(
-              t('documentsList.similarPrompt', { pct: top.similarity, title: top.title || top.original_name }),
-            )
-            if (!proceed) return
-          }
-        } catch {
-          /* IA indisponible */
-        }
-      }
-
       const formData = new FormData()
       selectedFiles.forEach((file) => formData.append('files', file))
       Object.entries(meta).forEach(([key, value]) => formData.append(key, value))
@@ -310,78 +273,20 @@ export default function DocumentsListPage() {
     }
   }
 
-  const toggleReportSelect = (docId: number) => {
-    setSelectedForReport((prev) =>
-      prev.includes(docId) ? prev.filter((id) => id !== docId) : [...prev, docId],
-    )
-  }
-
-  const generateMultiDocReport = async () => {
-    if (selectedForReport.length === 0) {
-      toast.error(t('documentsList.selectDocReport'))
-      return
-    }
-    setReportLoading(true)
-    try {
-      const res = await api.post('/ai-studio/report-multi-docs', { documentIds: selectedForReport })
-      const txt = res.data.data?.reportText || '—'
-      const w = window.open('', '_blank')
-      if (w) {
-        w.document.write(
-          `<pre style="white-space:pre-wrap;font-family:Arial;padding:24px">${txt.replace(/</g, '&lt;')}</pre>`,
-        )
-        w.document.close()
-        w.focus()
-        w.print()
-      }
-      toast.success(t('documentsList.reportOk'))
-    } catch (e: any) {
-      toast.error(e.response?.data?.message || t('documentsList.reportFail'))
-    } finally {
-      setReportLoading(false)
-    }
-  }
-
-  const handleNaturalSearch = async () => {
-    const phrase = naturalPhrase.trim()
-    if (!phrase) return
-    setNaturalLoading(true)
-    try {
-      const response = await api.post('/ai-studio/search-natural', { phrase })
-      const docs =
-        (Array.isArray(response.data?.documents) ? response.data.documents : null) ||
-        (Array.isArray(response.data?.data?.results) ? response.data.data.results : [])
-      setDocuments(docs)
-      setTotal(Number(response.data?.total || docs.length || 0))
-      const f = response.data?.resolvedFilters || response.data?.data?.filters || {}
-      setFilters((prev) => ({
-        ...prev,
-        search: f.search || '',
-        category: f.category || '',
-        status: f.status || '',
-      }))
-    } catch (e: any) {
-      toast.error(e.response?.data?.message || t('documentsList.naturalSearchFail'))
-    } finally {
-      setNaturalLoading(false)
-    }
-  }
-
-  const applySearchResults = (docs: any[], mode: string, fallback: boolean) => {
+  const applySmartSearchResults = (docs: any[], mode: string, fallback: boolean) => {
     setDocuments(docs)
-    setTotal(docs.length)
     const modeLabel = fallback ? `${mode} (${t('documentsList.vectorFallbackHint')})` : mode
-    setVectorMode(modeLabel)
+    setSmartMode(modeLabel)
   }
 
-  const handleVectorSearch = async () => {
-    const q = vectorQuery.trim()
+  const handleSmartSearch = async () => {
+    const q = smartQuery.trim()
     if (!q) {
+      setSmartMode('')
       void loadDocuments()
-      setVectorMode('')
       return
     }
-    setVectorLoading(true)
+    setSmartLoading(true)
     try {
       const response = await api.post('/documents/search-vector', { q, limit: 25 })
       let docs = Array.isArray(response.data?.data) ? response.data.data : []
@@ -395,7 +300,7 @@ export default function DocumentsListPage() {
         mode = 'classic-fallback'
         fallback = true
       }
-      applySearchResults(docs, mode, fallback)
+      applySmartSearchResults(docs, mode, fallback)
       if (docs.length === 0) {
         toast.info(t('documentsList.vectorSearchEmpty'))
       } else {
@@ -411,7 +316,7 @@ export default function DocumentsListPage() {
         const docs =
           (Array.isArray(classic.data?.documents) ? classic.data.documents : null) ||
           (Array.isArray(classic.data?.data) ? classic.data.data : [])
-        applySearchResults(docs, 'classic-fallback', true)
+        applySmartSearchResults(docs, 'classic-fallback', true)
         if (docs.length > 0) {
           toast.success(t('documentsList.vectorSearchOkFallback', { count: docs.length }))
         } else {
@@ -421,133 +326,7 @@ export default function DocumentsListPage() {
         toast.error(e2.response?.data?.message || t('documentsList.vectorSearchFail'))
       }
     } finally {
-      setVectorLoading(false)
-    }
-  }
-
-  const handleSearch = async () => {
-    const q = searchQuery.trim()
-    if (!q) {
-      void loadDocuments()
-      return
-    }
-    setLoading(true)
-    try {
-      const response = await api.get('/documents/search', {
-        params: { q, page: 1, limit: 20 },
-      })
-      const docs =
-        (Array.isArray(response.data?.documents) ? response.data.documents : null) ||
-        (Array.isArray(response.data?.data) ? response.data.data : [])
-      setDocuments(docs)
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || t('documentsList.naturalSearchFail'))
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const startVoiceSearch = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SpeechRecognition) {
-      toast.error(t('documentsList.voiceUnsupported'))
-      return
-    }
-    const recog = new SpeechRecognition()
-    recog.lang = i18n.language?.startsWith('en') ? 'en-US' : 'fr-FR'
-    recog.interimResults = false
-    recog.maxAlternatives = 1
-    setVoiceListening(true)
-    recog.onresult = (event: any) => {
-      const txt = String(event.results?.[0]?.[0]?.transcript || '').trim()
-      if (txt) {
-        setNaturalPhrase(txt)
-        void handleNaturalSearch()
-        toast.success(t('documentsList.voiceCommandOk', { text: txt }))
-      }
-    }
-    recog.onerror = () => toast.error(t('documentsList.voiceFail'))
-    recog.onend = () => setVoiceListening(false)
-    recog.start()
-  }
-
-  const fetchSimilarRecommendations = async () => {
-    const id = Number(similarDocId || 0)
-    if (!id) {
-      toast.error(t('documentsList.similarIdInvalid'))
-      return
-    }
-    setSimilarLoading(true)
-    try {
-      const res = await api.get(`/ai-studio/recommend-similar/${id}`)
-      setSimilarDocs(res.data.data?.similar || [])
-      toast.success(t('documentsList.similarOk'))
-    } catch (e: any) {
-      toast.error(e.response?.data?.message || t('documentsList.similarFail'))
-    } finally {
-      setSimilarLoading(false)
-    }
-  }
-
-  const askMultiDocs = async () => {
-    if (selectedForReport.length === 0) {
-      toast.error(t('documentsList.qaSelect'))
-      return
-    }
-    if (!qaQuestion.trim()) {
-      toast.error(t('documentsList.qaQuestionRequired'))
-      return
-    }
-    setQaLoading(true)
-    try {
-      const res = await api.post('/ai-studio/multi-doc-qa', {
-        documentIds: selectedForReport,
-        question: qaQuestion,
-      })
-      setQaAnswer(res.data.data?.answer || '')
-      toast.success(t('documentsList.qaOk'))
-    } catch (e: any) {
-      toast.error(e.response?.data?.message || t('documentsList.qaFail'))
-    } finally {
-      setQaLoading(false)
-    }
-  }
-
-  const suggestClassification = async () => {
-    const selectedFiles = files.length > 0 ? files : Array.from(fileInputRef.current?.files || [])
-    if (selectedFiles.length === 0) {
-      toast.error(t('documentsList.classifySelect'))
-      return
-    }
-    setAiSuggestLoading(true)
-    try {
-      const f = selectedFiles[0]
-      const fd = new FormData()
-      fd.append('file', f)
-      const res = await api.post('/ai-studio/classify', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
-      const out = String(res.data.data?.output || '')
-      setAiSuggestion(out)
-    } catch (e: any) {
-      toast.error(e.response?.data?.message || t('documentsList.suggestFail'))
-    } finally {
-      setAiSuggestLoading(false)
-    }
-  }
-
-  const applySuggestion = () => {
-    if (!aiSuggestion) return
-    try {
-      const parsed = JSON.parse(aiSuggestion)
-      setMeta((prev) => ({
-        ...prev,
-        category: parsed.category || prev.category,
-        tags: Array.isArray(parsed.tags) ? parsed.tags.join(', ') : prev.tags,
-      }))
-      toast.success(t('documentsList.suggestApplied'))
-    } catch {
-      toast.error(t('documentsList.suggestInvalidJson'))
+      setSmartLoading(false)
     }
   }
 
@@ -583,12 +362,13 @@ export default function DocumentsListPage() {
         tagsList: Array.isArray(doc.tags) ? doc.tags : [],
         downloadUrl: doc.downloadUrl,
         original_name: doc.original_name,
+        vectorScore: doc.vectorScore,
       })),
     [documents],
   )
 
-  const columns: DataTableColumn<any>[] = useMemo(
-    () => [
+  const columns: DataTableColumn<any>[] = useMemo(() => {
+    const cols: DataTableColumn<any>[] = [
       { key: 'title', label: t('common.title') },
       { key: 'category', label: t('common.category') },
       {
@@ -621,7 +401,24 @@ export default function DocumentsListPage() {
         ),
       },
       { key: 'owner', label: t('common.owner') },
-      {
+    ]
+
+    if (smartMode) {
+      cols.splice(1, 0, {
+        key: 'vectorScore',
+        label: t('documentsList.relevanceCol'),
+        render: (row) =>
+          row.vectorScore != null ? (
+            <span className="font-mono text-xs text-muted-foreground">
+              {Math.round(Number(row.vectorScore) * 100)}%
+            </span>
+          ) : (
+            <span className="text-xs text-muted-foreground">{t('common.emDash')}</span>
+          ),
+      })
+    }
+
+    cols.push({
         key: 'actions',
         label: t('common.actions'),
         render: (row) => (
@@ -661,11 +458,11 @@ export default function DocumentsListPage() {
             </Button>
           </div>
         ),
-      },
-    ],
+    })
+
+    return cols
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t, docDownloadId],
-  )
+  }, [t, docDownloadId, smartMode])
 
   const ownerIdFilter = searchParams.get('ownerId')
 
@@ -763,7 +560,7 @@ export default function DocumentsListPage() {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <Label htmlFor="upload-title">{t('common.title')}</Label>
               <Input
                 id="upload-title"
@@ -772,15 +569,25 @@ export default function DocumentsListPage() {
                 placeholder={t('documentsList.titlePlaceholder')}
               />
             </div>
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <Label htmlFor="upload-category">{t('common.category')}</Label>
-              <Input
-                id="upload-category"
-                value={meta.category}
-                onChange={(event) => setMeta((prev) => ({ ...prev, category: event.target.value }))}
-              />
+              <Select
+                value={meta.category || categories[0] || DEFAULT_DOCUMENT_CATEGORY}
+                onValueChange={(v) => setMeta((prev) => ({ ...prev, category: v }))}
+              >
+                <SelectTrigger id="upload-category">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map((cat) => (
+                    <SelectItem key={cat} value={cat}>
+                      {cat}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <Label htmlFor="upload-visibility">{t('common.visibility')}</Label>
               <Select
                 value={meta.visibility}
@@ -795,7 +602,7 @@ export default function DocumentsListPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <Label htmlFor="upload-tags">{t('common.tags')}</Label>
               <Input
                 id="upload-tags"
@@ -820,7 +627,7 @@ export default function DocumentsListPage() {
               <p className="text-sm font-medium">{t('documentsList.customFieldsHeader')}</p>
               <div className="grid gap-3 sm:grid-cols-2">
                 {customFields.map((field: any) => (
-                  <div key={field.id} className="space-y-1.5">
+                  <div key={field.id} className="min-w-0 space-y-1.5">
                     <Label htmlFor={`cf-${field.id}`}>{field.name}</Label>
                     {field.type === 'select' ? (
                       <Select
@@ -861,43 +668,7 @@ export default function DocumentsListPage() {
               <UploadIcon className="mr-2 size-4" />
               {t('documentsList.uploadBtn')}
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={suggestClassification}
-              disabled={aiSuggestLoading}
-            >
-              <Sparkles className="mr-2 size-4" />
-              {aiSuggestLoading ? t('documentsList.aiAnalyzing') : t('documentsList.aiSuggest')}
-            </Button>
-            {aiSuggestion ? (
-              <>
-                <Button type="button" variant="secondary" onClick={applySuggestion}>
-                  {t('documentsList.applyAllSuggestion')}
-                </Button>
-                <Button type="button" variant="ghost" onClick={() => setAiSuggestion(null)}>
-                  {t('documentsList.ignoreSuggestion')}
-                </Button>
-              </>
-            ) : null}
           </div>
-
-          {aiSuggestion ? (
-            <pre className="rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">{aiSuggestion}</pre>
-          ) : null}
-
-          {workflowHint ? (
-            <div className="rounded-md border bg-muted/40 p-3 text-sm">
-              <strong>{t('documentsList.workflowSuggestTitle')}</strong>{' '}
-              {workflowHint.suggestedWorkflow
-                ? t('documentsList.workflowSuggestNamed', {
-                    name: workflowHint.suggestedWorkflow.name,
-                    category: workflowHint.detectedCategory,
-                  })
-                : t('documentsList.workflowDetectedCategory', { cat: workflowHint.detectedCategory })}
-              <p className="mt-1 text-xs text-muted-foreground">{workflowHint.rationale}</p>
-            </div>
-          ) : null}
         </form>
       </Card>
 
@@ -906,100 +677,58 @@ export default function DocumentsListPage() {
         subtitle={loading ? t('common.loading') : t('documentsList.listSub')}
       >
         <div className="space-y-3">
-          {/* Search bars */}
-          <div className="grid gap-3 lg:grid-cols-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="quick-search">{t('common.search')}</Label>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="quick-search"
-                    type="text"
-                    placeholder={t('documentsList.searchPh')}
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        void handleSearch()
-                      }
-                    }}
-                    className="pl-9"
-                  />
-                </div>
-                <Button variant="outline" onClick={handleSearch} type="button">
-                  {t('common.search')}
-                </Button>
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="natural">{t('documentsList.naturalSearchLabel')}</Label>
-              <div className="flex gap-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="smart-search">
+              <Sparkles className="mr-1 inline size-3.5" />
+              {t('documentsList.vectorSearchLabel')}
+            </Label>
+            <p className="text-xs text-muted-foreground">{t('documentsList.smartSearchHint')}</p>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  id="natural"
-                  value={naturalPhrase}
-                  onChange={(e) => setNaturalPhrase(e.target.value)}
+                  id="smart-search"
+                  value={smartQuery}
+                  onChange={(e) => setSmartQuery(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault()
-                      void handleNaturalSearch()
-                    }
-                  }}
-                  placeholder={t('documentsList.naturalPh')}
-                />
-                <Button onClick={handleNaturalSearch} disabled={naturalLoading} type="button">
-                  {t('documentsList.searchBtn')}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  onClick={startVoiceSearch}
-                  disabled={voiceListening}
-                  title={voiceListening ? t('documentsList.voiceListening') : t('documentsList.voice')}
-                >
-                  <Mic className={cn('size-4', voiceListening && 'animate-pulse text-rose-500')} />
-                </Button>
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="vector">
-                <Sparkles className="mr-1 inline size-3.5" />
-                {t('documentsList.vectorSearchLabel')}
-              </Label>
-              <div className="flex gap-2">
-                <Input
-                  id="vector"
-                  value={vectorQuery}
-                  onChange={(e) => setVectorQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      void handleVectorSearch()
+                      void handleSmartSearch()
                     }
                   }}
                   placeholder={t('documentsList.vectorSearchPh')}
+                  className="pl-9"
                 />
-                <Button onClick={handleVectorSearch} disabled={vectorLoading} variant="secondary" type="button">
-                  {vectorLoading ? t('documentsList.vectorSearching') : t('documentsList.vectorSearchBtn')}
-                </Button>
               </div>
-              {vectorMode ? (
-                <p className="text-xs text-muted-foreground">
-                  {t('documentsList.vectorMode', { mode: vectorMode })}
-                </p>
+              <Button onClick={handleSmartSearch} disabled={smartLoading} type="button">
+                {smartLoading ? t('documentsList.vectorSearching') : t('documentsList.vectorSearchBtn')}
+              </Button>
+              {smartQuery.trim() ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setSmartQuery('')
+                    setSmartMode('')
+                    void loadDocuments()
+                  }}
+                >
+                  {t('documentsList.resetSearch')}
+                </Button>
               ) : null}
             </div>
+            {smartMode ? (
+              <p className="text-xs text-muted-foreground">
+                {t('documentsList.vectorMode', { mode: smartMode })}
+              </p>
+            ) : null}
           </div>
 
           <Separator />
 
           {/* Filters */}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <Label htmlFor="f-search">{t('common.search')}</Label>
               <Input
                 id="f-search"
@@ -1007,23 +736,49 @@ export default function DocumentsListPage() {
                 onChange={(event) => setFilters((prev) => ({ ...prev, search: event.target.value }))}
               />
             </div>
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <Label htmlFor="f-category">{t('common.category')}</Label>
-              <Input
-                id="f-category"
-                value={filters.category}
-                onChange={(event) => setFilters((prev) => ({ ...prev, category: event.target.value }))}
-              />
+              <Select
+                value={filters.category || 'all'}
+                onValueChange={(v) =>
+                  setFilters((prev) => ({ ...prev, category: v === 'all' ? '' : v }))
+                }
+              >
+                <SelectTrigger id="f-category">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('common.all')}</SelectItem>
+                  {categories.map((cat) => (
+                    <SelectItem key={cat} value={cat}>
+                      {cat}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <Label htmlFor="f-status">{t('common.status')}</Label>
-              <Input
-                id="f-status"
-                value={filters.status}
-                onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}
-              />
+              <Select
+                value={filters.status || 'all'}
+                onValueChange={(v) =>
+                  setFilters((prev) => ({ ...prev, status: v === 'all' ? '' : v }))
+                }
+              >
+                <SelectTrigger id="f-status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('common.all')}</SelectItem>
+                  {DOCUMENT_FILTER_STATUSES.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {statusLabel(status, t)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <Label htmlFor="f-dept">{t('documentsList.departmentOwner')}</Label>
               <Select
                 value={filters.departmentId || 'all'}
@@ -1052,85 +807,6 @@ export default function DocumentsListPage() {
           </div>
 
           <DataTable columns={columns} rows={rows} loading={loading} pageSize={8} />
-
-          {/* Multi-doc selection */}
-          {documents.length > 0 ? (
-            <div className="flex flex-wrap gap-2 rounded-md border bg-muted/30 p-3 text-sm">
-              <span className="text-xs font-medium text-muted-foreground">
-                {t('documentsList.selectIdsLabel', 'Sélection pour IA')}:
-              </span>
-              {documents.slice(0, 30).map((doc: any) => (
-                <label
-                  key={`rpt-${doc.id}`}
-                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-card px-2 py-1 hover:bg-accent"
-                >
-                  <Checkbox
-                    checked={selectedForReport.includes(doc.id)}
-                    onCheckedChange={() => toggleReportSelect(doc.id)}
-                  />
-                  <span className="text-xs">#{doc.id}</span>
-                </label>
-              ))}
-            </div>
-          ) : null}
-
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={generateMultiDocReport}
-              disabled={reportLoading}
-            >
-              {reportLoading ? t('common.generating') : t('documentsList.reportBtn')}
-            </Button>
-          </div>
-
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="similar-id">{t('documentsList.similarId')}</Label>
-              <Input
-                id="similar-id"
-                className="w-32"
-                value={similarDocId}
-                onChange={(e) => setSimilarDocId(e.target.value)}
-                placeholder={t('documentsList.similarIdPlaceholder')}
-              />
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={fetchSimilarRecommendations}
-              disabled={similarLoading}
-            >
-              {similarLoading ? t('documentsList.recommendSimilarLoading') : t('documentsList.recommendSimilar')}
-            </Button>
-          </div>
-
-          {similarDocs.length > 0 ? (
-            <p className="text-sm">
-              <strong>{t('documentsList.similarDetected')}</strong>{' '}
-              {similarDocs.map((d: any) => `#${d.id} ${d.title} (${d.similarity}%)`).join(' | ')}
-            </p>
-          ) : null}
-
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="min-w-[280px] flex-1 space-y-1.5">
-              <Label htmlFor="qa-question">{t('documentsList.qaSectionLabel')}</Label>
-              <Input
-                id="qa-question"
-                value={qaQuestion}
-                onChange={(e) => setQaQuestion(e.target.value)}
-                placeholder={t('documentsList.qaPh')}
-              />
-            </div>
-            <Button type="button" variant="secondary" onClick={askMultiDocs} disabled={qaLoading}>
-              {qaLoading ? t('documentsList.qaThinking') : t('documentsList.qaBtn')}
-            </Button>
-          </div>
-
-          {qaAnswer ? (
-            <pre className="rounded-md border bg-muted p-3 text-xs whitespace-pre-wrap">{qaAnswer}</pre>
-          ) : null}
         </div>
       </Card>
     </div>

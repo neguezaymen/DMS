@@ -18,14 +18,15 @@ async function searchDocuments({
   const normalizedLimit = Math.min(50, Math.max(1, Number(limit) || 10));
   const offset = (normalizedPage - 1) * normalizedLimit;
   const filters = [];
-  const params = [];
+  const selectParams = [];
+  const whereParams = [];
   let relevanceSelect = "0 AS relevance";
   let orderBy = "d.created_at DESC";
 
   if (scopeUser) {
     const vis = documentsVisibleSql(scopeUser);
     filters.push(`(${vis.sql})`);
-    params.push(...vis.params);
+    whereParams.push(...vis.params);
   }
 
   if (departmentId) {
@@ -35,44 +36,46 @@ async function searchDocuments({
          WHERE ud.user_id = d.owner_id AND ud.department_id = ?
        )`
     );
-    params.push(Number(departmentId));
+    whereParams.push(Number(departmentId));
   }
 
   if (q && q.trim()) {
     relevanceSelect = `(
-      (CASE WHEN COALESCE(d.title, '')          ILIKE '%' || ? || '%' THEN 4 ELSE 0 END) +
+      (CASE WHEN COALESCE(d.title, '')          ILIKE '%' || ? || '%' THEN 5 ELSE 0 END) +
+      (CASE WHEN COALESCE(d.category, '')      ILIKE '%' || ? || '%' THEN 4 ELSE 0 END) +
+      (CASE WHEN COALESCE(d.tags, '')           ILIKE '%' || ? || '%' THEN 3 ELSE 0 END) +
       (CASE WHEN COALESCE(d.description, '')    ILIKE '%' || ? || '%' THEN 2 ELSE 0 END) +
-      (CASE WHEN COALESCE(d.tags, '')           ILIKE '%' || ? || '%' THEN 2 ELSE 0 END) +
-      (CASE WHEN COALESCE(d.extracted_text, '') ILIKE '%' || ? || '%' THEN 1 ELSE 0 END)
+      (CASE WHEN COALESCE(d.extracted_text, '') ILIKE '%' || ? || '%' THEN 2 ELSE 0 END)
     ) AS relevance`;
     const term = q.trim();
-    params.push(term, term, term, term);
+    selectParams.push(term, term, term, term, term);
     filters.push(
       `(COALESCE(d.title, '') ILIKE '%' || ? || '%'
+        OR COALESCE(d.category, '') ILIKE '%' || ? || '%'
         OR COALESCE(d.description, '') ILIKE '%' || ? || '%'
         OR COALESCE(d.tags, '') ILIKE '%' || ? || '%'
         OR COALESCE(d.extracted_text, '') ILIKE '%' || ? || '%')`
     );
-    params.push(term, term, term, term);
+    whereParams.push(term, term, term, term, term);
     orderBy = "relevance DESC, d.created_at DESC";
   }
   if (category) {
     filters.push("d.category = ?");
-    params.push(category);
+    whereParams.push(category);
   }
   if (status) {
     filters.push("d.status = ?");
-    params.push(status);
+    whereParams.push(status);
   } else {
     filters.push("d.status <> 'deleted'");
   }
   if (dateFrom) {
     filters.push("d.created_at >= ?");
-    params.push(dateFrom);
+    whereParams.push(dateFrom);
   }
   if (dateTo) {
     filters.push("d.created_at <= ?");
-    params.push(dateTo);
+    whereParams.push(dateTo);
   }
   const whereClause = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
   const safeOffset = Number.isFinite(offset) ? offset : 0;
@@ -84,7 +87,7 @@ async function searchDocuments({
                    ${whereClause}
                    ORDER BY ${orderBy}
                    LIMIT ${safeLimit} OFFSET ${safeOffset}`;
-  const listParams = [...params];
+  const listParams = [...selectParams, ...whereParams];
   console.log("[documents.search.list] SQL:", listSql);
   console.log("[documents.search.list] Params:", listParams);
   const listResult = await query(listSql, listParams);
@@ -93,11 +96,15 @@ async function searchDocuments({
                     FROM documents d
                     ${whereClause}`;
   console.log("[documents.search.count] SQL:", countSql);
-  console.log("[documents.search.count] Params:", params);
-  const countResult = await query(countSql, params);
+  console.log("[documents.search.count] Params:", whereParams);
+  const countResult = await query(countSql, whereParams);
 
   return {
-    data: listResult.rows.map(toDocumentDto),
+    data: listResult.rows.map((row) => {
+      const dto = toDocumentDto(row);
+      dto.searchScore = Number(row.relevance) || 0;
+      return dto;
+    }),
     pagination: {
       page: normalizedPage,
       limit: normalizedLimit,

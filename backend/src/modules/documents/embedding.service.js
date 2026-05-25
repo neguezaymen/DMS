@@ -276,36 +276,48 @@ async function searchMysqlEmbeddings(queryVector, scopeUser, limit) {
   }
 }
 
-async function lexicalSemanticSearch(q, scopeUser, limit) {
-  const tokens = expandSemanticTokens(tokenize(q));
-  const searchTokens = tokens.length > 0 ? tokens : tokenize(q);
-  if (searchTokens.length === 0) return [];
-
-  const vis = documentsVisibleSql(scopeUser);
-  const orParts = [];
-  const params = [];
-
-  for (const token of searchTokens.slice(0, 12)) {
-    const like = `%${token}%`;
-    orParts.push(
-      `(d.title LIKE ? OR d.description LIKE ? OR d.tags LIKE ? OR d.extracted_text LIKE ? OR d.category LIKE ?)`
-    );
-    params.push(like, like, like, like, like);
+async function searchClassicRanked(q, user, limit) {
+  try {
+    const result = await searchDocuments({
+      q,
+      scopeUser: isAdmin(user) ? null : user,
+      page: 1,
+      limit,
+    });
+    const hits = (result.data || []).filter((doc) => (Number(doc.searchScore) || 0) > 0);
+    if (!hits.length) return [];
+    const maxRel = Math.max(...hits.map((doc) => Number(doc.searchScore) || 0), 1);
+    return hits.map((doc) => ({
+      documentId: Number(doc.id),
+      score: (Number(doc.searchScore) || 0) / maxRel,
+    }));
+  } catch (err) {
+    console.warn("[embedding] classic ranked search failed:", err.message);
+    return [];
   }
+}
 
-  const safeLimit = Math.min(50, Math.max(1, Number(limit) || 15));
-  const sql = `SELECT d.id
-               FROM documents d
-               WHERE (${vis.sql}) AND d.status <> 'deleted'
-                 AND (${orParts.join(" OR ")})
-               ORDER BY d.updated_at DESC
-               LIMIT ${safeLimit}`;
-
-  const res = await query(sql, [...params, ...vis.params]);
-  return res.rows.map((r, i) => ({
-    documentId: Number(r.id),
-    score: 0.5 - i * 0.01,
-  }));
+function mergeRankedHits(vectorHits, classicHits, limit) {
+  const merged = new Map();
+  for (const hit of vectorHits) {
+    merged.set(hit.documentId, {
+      documentId: hit.documentId,
+      score: hit.score * 0.6,
+    });
+  }
+  for (const hit of classicHits) {
+    const prev = merged.get(hit.documentId);
+    const classicPart = hit.score * 0.4;
+    if (prev) {
+      merged.set(hit.documentId, {
+        documentId: hit.documentId,
+        score: prev.score + classicPart,
+      });
+    } else {
+      merged.set(hit.documentId, { documentId: hit.documentId, score: classicPart });
+    }
+  }
+  return [...merged.values()].sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
 async function searchClassicFallback({ q, user, limit }) {
@@ -350,7 +362,7 @@ async function hydrateRankedDocuments(ranked) {
 
 /**
  * Recherche sémantique — ne lève jamais d'exception (soutenance / prod).
- * Ordre : pgvector → MySQL JSON → lexique enrichi → GET /documents/search équivalent.
+ * pgvector / JSON → fusion avec recherche textuelle pondérée (titre, catégorie, contenu).
  */
 async function searchDocumentsVector({ q, user, limit = 15 }) {
   const queryText = String(q || "").trim();
@@ -359,6 +371,11 @@ async function searchDocumentsVector({ q, user, limit = 15 }) {
   }
 
   const normalizedLimit = Math.min(30, Math.max(1, Number(limit) || 15));
+  const fetchLimit = Math.min(50, normalizedLimit * 2);
+  const MIN_VECTOR_SCORE = 0.15;
+
+  let vectorRanked = [];
+  let vectorMode = null;
 
   try {
     const queryVector = await createEmbeddingVector(queryText);
@@ -369,72 +386,50 @@ async function searchDocumentsVector({ q, user, limit = 15 }) {
     );
     const visibleIds = idRes.rows.map((r) => Number(r.id));
 
-    let ranked = [];
-    let mode = OPENAI_KEY ? "openai" : "local";
-
-    const pgHits = await searchPgVector(queryVector, visibleIds, normalizedLimit);
-    if (pgHits && pgHits.length > 0) {
-      ranked = pgHits;
-      mode = "pgvector";
+    const pgHits = await searchPgVector(queryVector, visibleIds, fetchLimit);
+    if (pgHits?.length) {
+      vectorRanked = pgHits.filter((h) => h.score >= MIN_VECTOR_SCORE);
+      if (vectorRanked.length) vectorMode = "pgvector";
     }
 
-    if (ranked.length === 0) {
-      const mysqlHits = await searchMysqlEmbeddings(queryVector, user, normalizedLimit);
-      if (mysqlHits.length > 0) {
-        ranked = mysqlHits;
-        mode = `${mode}+mysql`;
-      }
-    }
-
-    if (ranked.length < normalizedLimit) {
-      const lexical = await lexicalSemanticSearch(queryText, user, normalizedLimit);
-      const seen = new Set(ranked.map((r) => r.documentId));
-      for (const hit of lexical) {
-        if (seen.has(hit.documentId)) continue;
-        ranked.push(hit);
-        seen.add(hit.documentId);
-        if (ranked.length >= normalizedLimit) break;
-      }
-      if (lexical.length > 0) mode = `${mode}+semantic-lexical`;
-    }
-
-    ranked.sort((a, b) => b.score - a.score);
-    ranked = ranked.slice(0, normalizedLimit);
-
-    if (ranked.length > 0) {
-      const data = await hydrateRankedDocuments(ranked);
-      if (data.length > 0) {
-        return {
-          data,
-          mode,
-          scores: ranked.map((r) => ({ documentId: r.documentId, score: r.score })),
-          fallback: false,
-        };
+    if (!vectorRanked.length) {
+      const mysqlHits = await searchMysqlEmbeddings(queryVector, user, fetchLimit);
+      vectorRanked = mysqlHits.filter((h) => h.score >= MIN_VECTOR_SCORE);
+      if (vectorRanked.length) {
+        vectorMode = OPENAI_KEY ? "openai-embedding" : "local-embedding";
       }
     }
   } catch (err) {
-    console.warn("[embedding] vector pipeline error, using classic fallback:", err.message);
+    console.warn("[embedding] vector pipeline error:", err.message);
   }
 
-  const classic = await searchClassicFallback({ q: queryText, user, limit: normalizedLimit });
-  if (classic.data.length > 0) return classic;
+  const classicRanked = await searchClassicRanked(queryText, user, fetchLimit);
 
-  try {
-    const lexicalOnly = await lexicalSemanticSearch(queryText, user, normalizedLimit);
-    if (lexicalOnly.length > 0) {
-      const data = await hydrateRankedDocuments(lexicalOnly);
-      return {
-        data,
-        mode: "semantic-lexical-only",
-        scores: lexicalOnly.map((r) => ({ documentId: r.documentId, score: r.score })),
-        fallback: true,
-      };
-    }
-  } catch (err) {
-    console.warn("[embedding] lexical-only failed:", err.message);
+  let ranked = [];
+  let mode = "no-results";
+  let fallback = false;
+
+  if (vectorRanked.length && classicRanked.length) {
+    ranked = mergeRankedHits(vectorRanked, classicRanked, normalizedLimit);
+    mode = `${vectorMode}+hybrid`;
+  } else if (vectorRanked.length) {
+    ranked = vectorRanked.slice(0, normalizedLimit);
+    mode = vectorMode || "vector";
+  } else if (classicRanked.length) {
+    ranked = classicRanked.slice(0, normalizedLimit);
+    mode = "classic-relevance";
+    fallback = true;
+  } else {
+    return { data: [], mode: "no-results", scores: [], fallback: true };
   }
 
-  return { data: [], mode: "no-results", scores: [], fallback: true };
+  const data = await hydrateRankedDocuments(ranked);
+  return {
+    data,
+    mode,
+    scores: ranked.map((r) => ({ documentId: r.documentId, score: r.score })),
+    fallback,
+  };
 }
 
 module.exports = {

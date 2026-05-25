@@ -2,6 +2,7 @@ const fs = require("fs/promises");
 const path = require("path");
 const { query } = require("../../config/db");
 const { buildDemoFileBuffer } = require("./demo-document-builder");
+const { queueTextExtraction } = require("../../jobs/extract-text.job");
 
 const uploadDir = path.resolve(__dirname, "../../../uploads");
 const demoDir = path.join(uploadDir, "demo");
@@ -42,6 +43,15 @@ const DEMO_DOCUMENTS = [
     status: "active",
     mimeType: "application/pdf",
     description: "Lettre de motivation pour candidature.",
+  },
+  {
+    originalName: "Dossier_Candidature_Dupont.pdf",
+    title: "Dossier candidature — Jean Dupont",
+    category: "Candidature",
+    tags: "candidature,CV,stage,RH",
+    status: "active",
+    mimeType: "application/pdf",
+    description: "Dossier complet pour candidature stage full-stack.",
   },
   {
     originalName: "Devis_Commercial_TELNET.pdf",
@@ -101,10 +111,19 @@ async function documentExistsByOriginalName(originalName) {
   return Boolean(r.rows.length);
 }
 
+async function indexDemoDocument(documentId, def, filePath) {
+  queueTextExtraction({
+    documentId,
+    filePath,
+    mimeType: def.mimeType,
+    originalName: def.originalName,
+  });
+}
+
 async function insertDemoDocument(def, ownerId) {
   const filePath = await writeDemoFile(def);
   const stats = await fs.stat(filePath);
-  await query(
+  const ins = await query(
     `INSERT INTO documents
        (title, original_name, file_path, mime_type, size, owner_id, category, status, tags, description, visibility)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'private')`,
@@ -121,6 +140,8 @@ async function insertDemoDocument(def, ownerId) {
       def.description,
     ]
   );
+  const documentId = Number(ins.insertId);
+  if (documentId) indexDemoDocument(documentId, def, filePath);
 }
 
 /**
@@ -160,6 +181,7 @@ async function regenerateDemoDocuments() {
     );
 
     if (existing.rows[0]) {
+      const documentId = Number(existing.rows[0].id);
       await query(
         `UPDATE documents
          SET title = ?, file_path = ?, mime_type = ?, size = ?, category = ?, status = 'active',
@@ -173,12 +195,13 @@ async function regenerateDemoDocuments() {
           def.category,
           def.tags,
           def.description,
-          existing.rows[0].id,
+          documentId,
         ]
       );
+      indexDemoDocument(documentId, def, filePath);
       updated += 1;
     } else {
-      await query(
+      const ins = await query(
         `INSERT INTO documents
            (title, original_name, file_path, mime_type, size, owner_id, category, status, tags, description, visibility)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'private')`,
@@ -195,6 +218,8 @@ async function regenerateDemoDocuments() {
           def.description,
         ]
       );
+      const documentId = Number(ins.insertId);
+      if (documentId) indexDemoDocument(documentId, def, filePath);
       seeded += 1;
     }
   }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Check, Copy } from 'lucide-react'
 import api from '../services/api/client'
 import Card from '../components/ui/Card'
 import { Button } from '@/components/shadcn/button'
@@ -24,6 +25,14 @@ import {
 } from '@/components/shadcn/table'
 import { useToast } from '../state/ToastContext'
 import { useAuth } from '../state/AuthContext'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/shadcn/dialog'
 
 const MIME_PRESETS: Record<string, string[] | null> = {
   default: null,
@@ -40,11 +49,14 @@ const MIME_PRESETS: Record<string, string[] | null> = {
 export default function UploadRequestsPage() {
   const { t } = useTranslation()
   const toast = useToast()
-  const { isAdmin, isManager } = useAuth()
+  const { isAuthenticated } = useAuth()
   const [tab, setTab] = useState('inbox')
   const [inbox, setInbox] = useState<any[]>([])
   const [mine, setMine] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false)
+  const [createdLinkUrl, setCreatedLinkUrl] = useState('')
+  const [copied, setCopied] = useState(false)
 
   const [form, setForm] = useState({
     targetDocumentId: '',
@@ -82,6 +94,18 @@ export default function UploadRequestsPage() {
     if (tab === 'mine') void loadMine()
   }, [tab, loadInbox, loadMine])
 
+  const copyCreatedLink = async () => {
+    if (!createdLinkUrl) return
+    try {
+      await navigator.clipboard.writeText(createdLinkUrl)
+      setCopied(true)
+      toast.success(t('uploadRequests.linkCopied'))
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      toast.error(t('uploadRequests.copyFailed'))
+    }
+  }
+
   const createLink = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
@@ -99,8 +123,10 @@ export default function UploadRequestsPage() {
       const res = await api.post('/upload-requests', body)
       const d = res.data.data
       const publicUrl = `${window.location.origin}/request-upload/${d.token}`
+      setCreatedLinkUrl(publicUrl)
+      setCopied(false)
+      setLinkDialogOpen(true)
       toast.success(t('uploadRequests.linkCreated'))
-      window.alert(t('uploadRequests.linkAlertBody', { url: publicUrl }))
       setForm({
         targetDocumentId: '',
         password: '',
@@ -160,9 +186,6 @@ export default function UploadRequestsPage() {
       toast.error(e.response?.data?.message || t('common.failed'))
     }
   }
-
-  const canCreate =
-    isAdmin || isManager || (form.targetDocumentId && String(form.targetDocumentId).trim() !== '')
 
   return (
     <div className="space-y-4">
@@ -249,9 +272,9 @@ export default function UploadRequestsPage() {
           <TabsContent value="create" className="pt-4">
             <form onSubmit={createLink} className="max-w-2xl space-y-3">
               <p className="text-xs text-muted-foreground">
-                {!isAdmin && !isManager
-                  ? t('uploadRequests.ownerDocHint')
-                  : t('uploadRequests.adminManagerHint')}
+                {form.targetDocumentId.trim()
+                  ? t('uploadRequests.targetDocOptionalHint')
+                  : t('uploadRequests.createHint')}
               </p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5 sm:col-span-2">
@@ -339,7 +362,7 @@ export default function UploadRequestsPage() {
                   </Select>
                 </div>
               </div>
-              <Button type="submit" disabled={!canCreate}>
+              <Button type="submit" disabled={!isAuthenticated}>
                 {t('uploadRequests.generateLink')}
               </Button>
             </form>
@@ -391,6 +414,40 @@ export default function UploadRequestsPage() {
           </TabsContent>
         </Tabs>
       </Card>
+
+      <Dialog open={linkDialogOpen} onOpenChange={setLinkDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t('uploadRequests.linkAlertTitle')}</DialogTitle>
+            <DialogDescription>{t('uploadRequests.linkDialogDesc')}</DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              readOnly
+              value={createdLinkUrl}
+              className="font-mono text-xs sm:flex-1"
+              onFocus={(e) => e.target.select()}
+              onClick={(e) => e.currentTarget.select()}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="shrink-0 gap-2 sm:w-auto"
+              onClick={() => void copyCreatedLink()}
+            >
+              {copied ? <Check className="size-4 text-emerald-600" /> : <Copy className="size-4" />}
+              {copied ? t('uploadRequests.copied') : t('uploadRequests.copyLink')}
+            </Button>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" onClick={() => setLinkDialogOpen(false)}>
+              {t('common.close')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -160,9 +160,7 @@ async function assertWorkflowActor(req, res, next) {
 
 router.get("/templates", authenticate, async (req, res, next) => {
   try {
-    if (isAdmin(req.user)) {
-      await ensureDefaultWorkflows();
-    }
+    await ensureDefaultWorkflows();
     const templates = await query(
       `SELECT w.*,
               (SELECT COUNT(*) FROM workflow_steps ws WHERE ws.workflow_id = w.id) AS steps_count,

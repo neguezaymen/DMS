@@ -9,9 +9,18 @@ const {
 } = require("./modules/notifications/notifications.service");
 const { runWorkflowReminderJob } = require("./modules/workflows/workflows.reminder.service");
 const { purgeDeletedDocuments } = require("./modules/documents/documents.service");
+const { ensureDefaultWorkflows } = require("./modules/workflows/workflows.defaults.service");
 
 applySchemaPatches()
-  .then(() => {
+  .then(async () => {
+    try {
+      await ensureDefaultWorkflows();
+      // eslint-disable-next-line no-console
+      console.log("[startup] Modèles workflow par défaut prêts");
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[startup] ensureDefaultWorkflows:", err?.message || err);
+    }
     app.listen(env.port, "0.0.0.0", () => {
       // eslint-disable-next-line no-console
       console.log(`Backend API listening on http://0.0.0.0:${env.port}`);

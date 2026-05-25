@@ -9,7 +9,7 @@ const { toDocumentDto } = require("../documents/documents.service");
 const { queueTextExtraction } = require("../../jobs/extract-text.job");
 const {
   generateOpaqueToken,
-  canCreateUploadRequest,
+  validateCreateUploadRequest,
   canReviewUploadRequest,
   normalizeAllowedMimes,
   loadRequestByToken,
@@ -33,15 +33,14 @@ async function buildFileRowWithRequest(fileId) {
 /** POST / — créer un lien d'upload */
 router.post("/", async (req, res, next) => {
   try {
-    const targetId = req.body.targetDocumentId != null ? Number(req.body.targetDocumentId) : null;
-    const okCreate = await canCreateUploadRequest(req.user, targetId);
-    if (!okCreate) {
-      return res.status(403).json({
+    const check = await validateCreateUploadRequest(req.user, req.body.targetDocumentId);
+    if (!check.ok) {
+      return res.status(check.status).json({
         success: false,
-        message:
-          "Création refusée : admin/manager, ou propriétaire du document cible (targetDocumentId requis pour les autres).",
+        message: check.message,
       });
     }
+    const targetId = check.targetDocumentId;
 
     const password = req.body.password != null ? String(req.body.password) : "";
     const notificationEmail =

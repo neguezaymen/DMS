@@ -4,6 +4,54 @@ const { query } = require("../../config/db");
 const { isAdmin } = require("../../middlewares/auth");
 const { documentsVisibleSql } = require("./document-access.service");
 
+const DEFAULT_DOCUMENT_CATEGORY = "Général";
+
+/** Catalogue proposé à l’upload (indépendant des documents déjà visibles). */
+const DOCUMENT_CATEGORY_PRESETS = [
+  DEFAULT_DOCUMENT_CATEGORY,
+  "Contrat",
+  "Facture",
+  "Rapport",
+  "Lettre",
+  "Candidature",
+  "Devis",
+  "RH",
+  "Finance",
+  "Juridique",
+  "Commercial",
+];
+
+/** Fusionne General / Général et déduplique (insensible à la casse). */
+function normalizeDocumentCategory(name) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) return "";
+  const lower = trimmed.toLowerCase();
+  if (lower === "general" || lower === "général") return DEFAULT_DOCUMENT_CATEGORY;
+  return trimmed;
+}
+
+function mergeDocumentCategories(rawList, { ensureDefault = true } = {}) {
+  const byKey = new Map();
+  for (const raw of rawList || []) {
+    const canonical = normalizeDocumentCategory(raw);
+    if (!canonical) continue;
+    const key = canonical.toLowerCase();
+    if (!byKey.has(key)) {
+      byKey.set(key, canonical);
+      continue;
+    }
+    if (canonical === DEFAULT_DOCUMENT_CATEGORY) {
+      byKey.set(key, DEFAULT_DOCUMENT_CATEGORY);
+    }
+  }
+  if (ensureDefault && !byKey.has(DEFAULT_DOCUMENT_CATEGORY.toLowerCase())) {
+    byKey.set(DEFAULT_DOCUMENT_CATEGORY.toLowerCase(), DEFAULT_DOCUMENT_CATEGORY);
+  }
+  return Array.from(byKey.values()).sort((a, b) =>
+    a.localeCompare(b, "fr", { sensitivity: "base" })
+  );
+}
+
 const toDocumentDto = (doc) => ({
   ...doc,
   visibility: doc.visibility || "private",
@@ -16,7 +64,7 @@ async function insertUploadedDocuments({
   files,
   ownerId,
   title,
-  category = "General",
+  category = DEFAULT_DOCUMENT_CATEGORY,
   tags = null,
   description = null,
   visibility = "private",
@@ -286,6 +334,10 @@ async function purgeDeletedDocuments({ olderThanDays = 30 } = {}) {
 }
 
 module.exports = {
+  DEFAULT_DOCUMENT_CATEGORY,
+  DOCUMENT_CATEGORY_PRESETS,
+  normalizeDocumentCategory,
+  mergeDocumentCategories,
   toDocumentDto,
   insertUploadedDocuments,
   updateExtractedText,

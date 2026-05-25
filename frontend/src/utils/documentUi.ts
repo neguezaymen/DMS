@@ -103,6 +103,51 @@ export function workflowTimelineAction(action: unknown, t: (k: string) => string
   return translated !== key ? translated : String(action || t('common.emDash'))
 }
 
+export const DEFAULT_DOCUMENT_CATEGORY = 'Général'
+
+export const DOCUMENT_CATEGORY_PRESETS = [
+  DEFAULT_DOCUMENT_CATEGORY,
+  'Contrat',
+  'Facture',
+  'Rapport',
+  'Lettre',
+  'Candidature',
+  'Devis',
+  'RH',
+  'Finance',
+  'Juridique',
+  'Commercial',
+] as const
+
+export function normalizeDocumentCategory(name: unknown): string {
+  const trimmed = String(name ?? '').trim()
+  if (!trimmed) return ''
+  const lower = trimmed.toLowerCase()
+  if (lower === 'general' || lower === 'général') return DEFAULT_DOCUMENT_CATEGORY
+  return trimmed
+}
+
+export function mergeDocumentCategories(
+  rawList: unknown[],
+  { ensureDefault = true }: { ensureDefault?: boolean } = {},
+): string[] {
+  const byKey = new Map<string, string>()
+  for (const raw of rawList) {
+    const canonical = normalizeDocumentCategory(raw)
+    if (!canonical) continue
+    const key = canonical.toLowerCase()
+    if (!byKey.has(key) || canonical === DEFAULT_DOCUMENT_CATEGORY) {
+      byKey.set(key, canonical)
+    }
+  }
+  if (ensureDefault && !byKey.has(DEFAULT_DOCUMENT_CATEGORY.toLowerCase())) {
+    byKey.set(DEFAULT_DOCUMENT_CATEGORY.toLowerCase(), DEFAULT_DOCUMENT_CATEGORY)
+  }
+  return Array.from(byKey.values()).sort((a, b) =>
+    a.localeCompare(b, 'fr', { sensitivity: 'base' }),
+  )
+}
+
 const TAG_CHIP: Record<string, string> = {
   important:
     'inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300',

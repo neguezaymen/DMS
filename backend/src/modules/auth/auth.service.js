@@ -19,6 +19,28 @@ const hashToken = (value) => crypto.createHash("sha256").update(value).digest("h
 const generate2faCode = () => String(Math.floor(100000 + Math.random() * 900000));
 const MAX_FAILED_LOGIN_ATTEMPTS = 10;
 const LOGIN_LOCK_MINUTES = 15;
+/** Rôles exemptés de la 2FA par e-mail (démo / comptes de test). */
+const TWO_FACTOR_EXEMPT_ROLES = new Set(["admin", "rh", "manager"]);
+
+async function issueLoginSession(user) {
+  await query("UPDATE users SET last_login_at = NOW() WHERE id = ?", [user.id]);
+  const accessToken = createAccessToken(user.id);
+  const refreshToken = createRefreshToken(user.id);
+  await query(
+    `INSERT INTO refresh_tokens (user_id, token, expires_at)
+     VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY))`,
+    [user.id, hashToken(refreshToken)]
+  );
+  return {
+    accessToken,
+    refreshToken,
+    user: {
+      id: user.id,
+      email: user.email,
+      fullName: user.full_name,
+    },
+  };
+}
 
 async function register({ fullName, email, password, confirmPassword }) {
   if (password !== confirmPassword) {
@@ -163,26 +185,10 @@ async function login({ email, password, ipAddress = null }) {
     [user.id]
   );
   const userRoles = (roleRows.rows || []).map((row) => String(row.name || "").toLowerCase());
-  const isAdmin = userRoles.includes("admin");
+  const skipTwoFactor = userRoles.some((role) => TWO_FACTOR_EXEMPT_ROLES.has(role));
 
-  if (isAdmin) {
-    await query("UPDATE users SET last_login_at = NOW() WHERE id = ?", [user.id]);
-    const accessToken = createAccessToken(user.id);
-    const refreshToken = createRefreshToken(user.id);
-    await query(
-      `INSERT INTO refresh_tokens (user_id, token, expires_at)
-       VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY))`,
-      [user.id, hashToken(refreshToken)]
-    );
-    return {
-      accessToken,
-      refreshToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        fullName: user.full_name,
-      },
-    };
+  if (skipTwoFactor) {
+    return issueLoginSession(user);
   }
 
   const sessionToken = crypto.randomBytes(32).toString("hex");

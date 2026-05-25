@@ -33,6 +33,15 @@ const DEFAULT_WORKFLOWS = [
     documentCategory: "Lettre",
     steps: [{ stepOrder: 1, roleName: "rh", dueHours: 24, reminderHours: 6 }],
   },
+  {
+    name: "Candidature – Validation complète",
+    description: "Recrutement en 2 étapes : pré-sélection RH → décision manager",
+    documentCategory: "Candidature",
+    steps: [
+      { stepOrder: 1, roleName: "rh", dueHours: 48, reminderHours: 12 },
+      { stepOrder: 2, roleName: "manager", dueHours: 72, reminderHours: 24 },
+    ],
+  },
 ];
 
 const DEMO_ROLES = [

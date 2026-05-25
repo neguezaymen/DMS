@@ -28,6 +28,37 @@ async function seed() {
       ["Administrateur", "admin@dms.local", hashedPassword, 1]
     );
 
+    const demoAccounts = [
+      { fullName: "Responsable RH", email: "rh@dms.local", password: "Rh123456!", role: "rh" },
+      {
+        fullName: "Manager Equipe",
+        email: "manager@dms.local",
+        password: "Manager123!",
+        role: "manager",
+      },
+    ];
+    for (const account of demoAccounts) {
+      const hash = await bcrypt.hash(account.password, 10);
+      await pool.query(
+        `INSERT INTO users (full_name, email, password_hash, is_active)
+         VALUES (?, ?, ?, 1)
+         ON CONFLICT (email) DO UPDATE SET
+           password_hash = EXCLUDED.password_hash,
+           full_name = EXCLUDED.full_name`,
+        [account.fullName, account.email, hash]
+      );
+      const [uRows] = await pool.query("SELECT id FROM users WHERE email = ?", [account.email]);
+      const uid = uRows[0]?.id;
+      if (uid) {
+        await pool.query("DELETE FROM user_roles WHERE user_id = ?", [uid]);
+        await pool.query(
+          `INSERT INTO user_roles (user_id, role_id)
+           SELECT ?, id FROM roles WHERE name = ? LIMIT 1`,
+          [uid, account.role]
+        );
+      }
+    }
+
     const [adminRows] = await pool.query(
       "SELECT id FROM users WHERE email = ?",
       ["admin@dms.local"]
@@ -48,6 +79,7 @@ async function seed() {
     await ensureDemoDocuments();
 
     console.log("✅ Seed terminé — compte admin : admin@dms.local / Admin123!");
+    console.log("   Comptes démo : rh@dms.local / Rh123456! | manager@dms.local / Manager123!");
     console.log("   Modèles workflow et documents de démo initialisés.");
   } catch (error) {
     console.error("Seed failed:", error.message);

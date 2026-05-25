@@ -13,6 +13,9 @@ const {
   getDashboardStats,
   duplicateDocument,
   deleteDocumentPermanent,
+  mergeDocumentCategories,
+  DEFAULT_DOCUMENT_CATEGORY,
+  DOCUMENT_CATEGORY_PRESETS,
   purgeDeletedDocuments,
 } = require("./documents.service");
 const { detectSensitiveInUpload } = require("./upload-risk.service");
@@ -163,26 +166,30 @@ function toRecipientList(input) {
 }
 
 /** Recherche sémantique (pgvector / MySQL / lexique) — toujours 200, repli classique si besoin */
-router.post("/search-vector", authenticate, async (req, res) => {
-  const q = req.body?.q || req.query?.q || "";
-  const limit = req.body?.limit || req.query?.limit || 15;
-  const result = await searchDocumentsVector({
-    q,
-    user: req.user,
-    limit,
-  });
-  return res.json({
-    success: true,
-    data: result.data,
-    meta: {
-      mode: result.mode,
-      scores: result.scores,
-      fallback: Boolean(result.fallback),
-      hint: result.fallback
-        ? "Recherche classique ou lexique sémantique (pgvector / embeddings optionnels)"
-        : undefined,
-    },
-  });
+router.post("/search-vector", authenticate, async (req, res, next) => {
+  try {
+    const q = req.body?.q || req.query?.q || "";
+    const limit = req.body?.limit || req.query?.limit || 15;
+    const result = await searchDocumentsVector({
+      q,
+      user: req.user,
+      limit,
+    });
+    return res.json({
+      success: true,
+      data: result.data,
+      meta: {
+        mode: result.mode,
+        scores: result.scores,
+        fallback: Boolean(result.fallback),
+        hint: result.fallback
+          ? "Recherche classique ou lexique sémantique (pgvector / embeddings optionnels)"
+          : undefined,
+      },
+    });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 /** Génère / régénère l'embedding d'un document */
@@ -257,9 +264,9 @@ router.get("/categories", authenticate, async (req, res, next) => {
       vis.params
     );
     const list = rows.rows.map((r) => r.category).filter(Boolean);
-    const defaults = ["General", "Général"];
-    const merged = [...new Set([...list, ...defaults])];
-    merged.sort((a, b) => a.localeCompare(b, "fr", { sensitivity: "base" }));
+    const merged = mergeDocumentCategories([...DOCUMENT_CATEGORY_PRESETS, ...list], {
+      ensureDefault: true,
+    });
     return res.json({ success: true, data: merged });
   } catch (error) {
     return next(error);
@@ -1096,7 +1103,7 @@ router.post(
         return res.status(400).json({ success: false, message: "No files uploaded" });
       }
 
-      const category = req.body.category || "General";
+      const category = req.body.category || DEFAULT_DOCUMENT_CATEGORY;
       const description = req.body.description || null;
       const tags = req.body.tags || null;
       const visibilityRaw = String(req.body.visibility || "private").toLowerCase();

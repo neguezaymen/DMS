@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const { query } = require("../../config/db");
-const { isAdmin } = require("../../middlewares/auth");
+const { isAdmin, isManager } = require("../../utils/auth-roles");
 const env = require("../../config/env");
 
 const JWT_PURPOSE = "upload_request_session";
@@ -25,9 +25,11 @@ function generateOpaqueToken() {
   return crypto.randomBytes(32).toString("hex");
 }
 
-function isManager(user) {
-  const roles = user?.roles || [];
-  return roles.some((r) => typeof r === "string" && /^manager$/i.test(r.trim()));
+function normalizeTargetDocumentId(raw) {
+  if (raw == null || raw === "") return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
 }
 
 async function loadDocument(documentId) {
@@ -55,15 +57,48 @@ async function markExpiredIfNeeded(row) {
   return row;
 }
 
-async function canCreateUploadRequest(user, targetDocumentId) {
-  if (isAdmin(user)) return true;
-  if (isManager(user)) return true;
-  if (targetDocumentId != null) {
-    const doc = await loadDocument(Number(targetDocumentId));
-    if (!doc) return false;
-    return String(doc.owner_id) === String(user.id);
+/**
+ * Valide la création d'une demande d'upload.
+ * Tout utilisateur authentifié peut créer un lien sans document cible.
+ * Si targetDocumentId est fourni, le document doit exister ; seuls admin/manager
+ * ou le propriétaire du document peuvent lier ce document.
+ */
+async function validateCreateUploadRequest(user, targetDocumentId) {
+  if (!user?.id) {
+    return { ok: false, status: 401, message: "Non authentifié", targetDocumentId: null };
   }
-  return false;
+
+  const docId = normalizeTargetDocumentId(targetDocumentId);
+  if (docId == null) {
+    return { ok: true, targetDocumentId: null };
+  }
+
+  const doc = await loadDocument(docId);
+  if (!doc) {
+    return {
+      ok: false,
+      status: 400,
+      message: "Document cible introuvable.",
+      targetDocumentId: null,
+    };
+  }
+
+  if (isAdmin(user) || isManager(user) || String(doc.owner_id) === String(user.id)) {
+    return { ok: true, targetDocumentId: docId };
+  }
+
+  return {
+    ok: false,
+    status: 403,
+    message:
+      "Document cible : vous devez en être le propriétaire (ou être admin/manager).",
+    targetDocumentId: null,
+  };
+}
+
+async function canCreateUploadRequest(user, targetDocumentId) {
+  const check = await validateCreateUploadRequest(user, targetDocumentId);
+  return check.ok;
 }
 
 async function canReviewUploadRequest(user, requestRow) {
@@ -148,10 +183,11 @@ module.exports = {
   JWT_PURPOSE,
   DEFAULT_ALLOWED_MIMES,
   generateOpaqueToken,
-  isManager,
+  normalizeTargetDocumentId,
   loadDocument,
   assertRequestRowActive,
   markExpiredIfNeeded,
+  validateCreateUploadRequest,
   canCreateUploadRequest,
   canReviewUploadRequest,
   normalizeAllowedMimes,

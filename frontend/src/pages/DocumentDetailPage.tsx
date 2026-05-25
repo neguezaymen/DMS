@@ -33,7 +33,7 @@ import {
 } from '@/components/shadcn/table'
 import { useToast } from '../state/ToastContext'
 import { useAuth } from '../state/AuthContext'
-import { statusLabel, tagChipClass, workflowTimelineAction } from '../utils/documentUi'
+import { statusLabel, tagChipClass, workflowTimelineAction, mergeDocumentCategories, DOCUMENT_CATEGORY_PRESETS } from '../utils/documentUi'
 import { resolveDocumentAccess } from '../utils/documentAccess'
 import DocumentSharesPanel from '../components/documents/DocumentSharesPanel'
 import DocumentPublicLinksPanel from '../components/documents/DocumentPublicLinksPanel'
@@ -159,7 +159,7 @@ export default function DocumentDetailPage() {
     try {
       const res = await api.get('/documents/categories')
       const list = Array.isArray(res.data?.data) ? res.data.data : []
-      setCategories(list)
+      setCategories(mergeDocumentCategories(list))
     } catch {
       setCategories([])
     }
@@ -356,14 +356,9 @@ export default function DocumentDetailPage() {
   }, [activeTab, id])
 
   const categoryOptions = useMemo(() => {
-    const merged = new Set(categories)
-    if (document?.category) merged.add(String(document.category).trim())
-    return Array.from(merged)
-      .filter(Boolean)
-      .sort((a, b) =>
-        a.localeCompare(b, i18n.language?.startsWith('en') ? 'en' : 'fr', { sensitivity: 'base' }),
-      )
-  }, [categories, document?.category, i18n.language])
+    const extras = document?.category ? [String(document.category).trim()] : []
+    return mergeDocumentCategories([...DOCUMENT_CATEGORY_PRESETS, ...categories, ...extras])
+  }, [categories, document?.category])
 
   const changeDocumentCategory = async (nextCategory: string) => {
     const next = String(nextCategory || '').trim()
