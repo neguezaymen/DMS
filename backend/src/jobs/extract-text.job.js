@@ -8,8 +8,14 @@ async function extractFromFile(filePath, mimeType, originalName) {
   const lowerName = (originalName || "").toLowerCase();
   if (mimeType === "application/pdf" || lowerName.endsWith(".pdf")) {
     const buffer = await fs.readFile(filePath);
-    const parsed = await pdfParse(buffer);
-    return parsed.text || "";
+    try {
+      const parsed = await pdfParse(buffer);
+      return parsed.text || "";
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn(`PDF parse failed for ${originalName}:`, error.message);
+      return "";
+    }
   }
   if (
     mimeType ===
@@ -38,4 +44,10 @@ function queueTextExtraction({ documentId, filePath, mimeType, originalName }) {
   });
 }
 
-module.exports = { queueTextExtraction };
+async function extractAndStoreText({ documentId, filePath, mimeType, originalName }) {
+  const text = await extractFromFile(filePath, mimeType, originalName);
+  await updateExtractedText(documentId, text.slice(0, 200000));
+  return text;
+}
+
+module.exports = { queueTextExtraction, extractFromFile, extractAndStoreText };

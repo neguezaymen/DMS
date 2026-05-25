@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Archive,
   Download,
@@ -30,6 +30,9 @@ import {
   SelectValue,
 } from '@/components/shadcn/select'
 import { Separator } from '@/components/shadcn/separator'
+import { Alert, AlertDescription, AlertTitle } from '@/components/shadcn/alert'
+import { Badge } from '@/components/shadcn/badge'
+import { Checkbox } from '@/components/shadcn/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -69,6 +72,7 @@ const DOCUMENT_FILTER_STATUSES = [
 
 export default function DocumentsListPage() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const isAdmin = useAdminAccess()
   const toast = useToast()
@@ -108,6 +112,11 @@ export default function DocumentsListPage() {
   const [smartMode, setSmartMode] = useState('')
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [uploadInsights, setUploadInsights] = useState<any>(null)
+  const [uploadInsightsLoading, setUploadInsightsLoading] = useState(false)
+  const [metaTouched, setMetaTouched] = useState(false)
+  const [autoEnrichMetadata, setAutoEnrichMetadata] = useState(true)
+  const [startSuggestedWorkflow, setStartSuggestedWorkflow] = useState(true)
 
   const loadPending = async () => {
     if (!isAdmin) {
@@ -206,9 +215,57 @@ export default function DocumentsListPage() {
     }
   }, [meta.category, uploadDialogOpen])
 
+  useEffect(() => {
+    if (!uploadDialogOpen || files.length === 0) {
+      setUploadInsights(null)
+      return
+    }
+    const file = files[0]
+    let cancelled = false
+    const analyze = async () => {
+      setUploadInsightsLoading(true)
+      try {
+        const formData = new FormData()
+        formData.append('file', file)
+        const res = await api.post('/ai-studio/upload-insights', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        })
+        if (cancelled) return
+        const data = res.data?.data
+        setUploadInsights(data)
+        if (!metaTouched && data) {
+          if (data.detectedCategory) {
+            setCategories((prev) => mergeDocumentCategories([...prev, data.detectedCategory]))
+          }
+          setMeta((prev) => ({
+            ...prev,
+            title: prev.title || String(file.name || '').replace(/\.[^.]+$/, ''),
+            category: data.detectedCategory || prev.category,
+            tags:
+              prev.tags ||
+              (Array.isArray(data.suggestedTags) ? data.suggestedTags.join(', ') : prev.tags),
+          }))
+        }
+      } catch {
+        if (!cancelled) setUploadInsights(null)
+      } finally {
+        if (!cancelled) setUploadInsightsLoading(false)
+      }
+    }
+    void analyze()
+    return () => {
+      cancelled = true
+    }
+  }, [files, uploadDialogOpen, metaTouched])
+
   const resetUploadForm = () => {
     setFiles([])
     setDragging(false)
+    setUploadInsights(null)
+    setUploadInsightsLoading(false)
+    setMetaTouched(false)
+    setAutoEnrichMetadata(true)
+    setStartSuggestedWorkflow(true)
     setMeta({
       title: '',
       category: categories[0] || DEFAULT_DOCUMENT_CATEGORY,
@@ -266,9 +323,34 @@ export default function DocumentsListPage() {
         toast.error(t('documentsList.selectFile'))
         return
       }
-      await api.post('/documents/upload', formData, {
+      const uploadRes = await api.post('/documents/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
+      const created = Array.isArray(uploadRes.data?.data) ? uploadRes.data.data : []
+      if (autoEnrichMetadata && created.length > 0) {
+        for (const doc of created.slice(0, 3)) {
+          try {
+            await api.post(`/ai-studio/extract-metadata/${doc.id}`, { applyToCustomFields: true })
+          } catch {
+            /* optional */
+          }
+        }
+      }
+      const first = created[0]
+      if (startSuggestedWorkflow && uploadInsights?.suggestedWorkflow?.id && first?.id) {
+        try {
+          await api.post(`/workflows/${uploadInsights.suggestedWorkflow.id}/start`, {
+            documentId: Number(first.id),
+          })
+          toast.success(
+            t('documentsList.workflowStarted', { name: uploadInsights.suggestedWorkflow.name }),
+          )
+        } catch {
+          navigate(
+            `/documents/${first.id}?tab=workflow&workflowId=${uploadInsights.suggestedWorkflow.id}`,
+          )
+        }
+      }
       toast.success(
         meta.visibility === 'private' && !isAdmin
           ? t('documentsList.uploadPending')
@@ -750,13 +832,81 @@ export default function DocumentsListPage() {
                 ) : null}
               </div>
 
+              {uploadInsightsLoading ? (
+                <Alert>
+                  <Sparkles className="size-4" />
+                  <AlertTitle>{t('documentsList.aiAnalyzing')}</AlertTitle>
+                  <AlertDescription>{t('documentsList.uploadInsightsLoading')}</AlertDescription>
+                </Alert>
+              ) : null}
+
+              {uploadInsights ? (
+                <Alert className={uploadInsights.hasDuplicateRisk ? 'border-amber-500' : ''}>
+                  <Sparkles className="size-4" />
+                  <AlertTitle>{t('documentsList.uploadInsightsTitle')}</AlertTitle>
+                  <AlertDescription className="space-y-2">
+                    <p>{t('documentsList.wfCategory', { cat: uploadInsights.detectedCategory })}</p>
+                    {uploadInsights.suggestedWorkflow ? (
+                      <p>
+                        {t('documentsList.uploadInsightsWorkflow', {
+                          name: uploadInsights.suggestedWorkflow.name,
+                        })}
+                      </p>
+                    ) : null}
+                    {uploadInsights.rationale ? (
+                      <p className="text-xs text-muted-foreground">{uploadInsights.rationale}</p>
+                    ) : null}
+                    {Array.isArray(uploadInsights.similar) && uploadInsights.similar.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {uploadInsights.similar.map((item: any) => (
+                          <Badge key={item.id} variant="secondary">
+                            {item.title || item.originalName} ({item.similarity}%)
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : null}
+                    {uploadInsights.hasDuplicateRisk ? (
+                      <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                        {t('documentsList.uploadInsightsDuplicate')}
+                      </p>
+                    ) : null}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
+              <div className="flex flex-col gap-2 rounded-md border border-dashed p-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={autoEnrichMetadata}
+                    onCheckedChange={(c) => setAutoEnrichMetadata(c === true)}
+                  />
+                  <span>{t('documentsList.autoEnrichMetadata')}</span>
+                </label>
+                {uploadInsights?.suggestedWorkflow ? (
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={startSuggestedWorkflow}
+                      onCheckedChange={(c) => setStartSuggestedWorkflow(c === true)}
+                    />
+                    <span>
+                      {t('documentsList.autoStartWorkflow', {
+                        name: uploadInsights.suggestedWorkflow.name,
+                      })}
+                    </span>
+                  </label>
+                ) : null}
+              </div>
+
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="min-w-0 space-y-1.5">
                   <Label htmlFor="upload-title">{t('common.title')}</Label>
                   <Input
                     id="upload-title"
                     value={meta.title}
-                    onChange={(event) => setMeta((prev) => ({ ...prev, title: event.target.value }))}
+                    onChange={(event) => {
+                      setMetaTouched(true)
+                      setMeta((prev) => ({ ...prev, title: event.target.value }))
+                    }}
                     placeholder={t('documentsList.titlePlaceholder')}
                   />
                 </div>
@@ -764,7 +914,10 @@ export default function DocumentsListPage() {
                   <Label htmlFor="upload-category">{t('common.category')}</Label>
                   <Select
                     value={meta.category || categories[0] || DEFAULT_DOCUMENT_CATEGORY}
-                    onValueChange={(v) => setMeta((prev) => ({ ...prev, category: v }))}
+                    onValueChange={(v) => {
+                      setMetaTouched(true)
+                      setMeta((prev) => ({ ...prev, category: v }))
+                    }}
                   >
                     <SelectTrigger id="upload-category" className="w-full">
                       <SelectValue />
@@ -798,7 +951,10 @@ export default function DocumentsListPage() {
                   <Input
                     id="upload-tags"
                     value={meta.tags}
-                    onChange={(event) => setMeta((prev) => ({ ...prev, tags: event.target.value }))}
+                    onChange={(event) => {
+                      setMetaTouched(true)
+                      setMeta((prev) => ({ ...prev, tags: event.target.value }))
+                    }}
                     placeholder={t('documentsList.tagsPlaceholder')}
                   />
                 </div>

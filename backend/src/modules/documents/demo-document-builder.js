@@ -1,6 +1,6 @@
-const { PDFDocument, StandardFonts, rgb } = require("pdf-lib");
 const archiver = require("archiver");
 const { PassThrough } = require("stream");
+const { ModernPdfBuilder, buildModernTextPdf } = require("./pdf-layout");
 
 function escapeXml(text) {
   return String(text)
@@ -10,56 +10,29 @@ function escapeXml(text) {
     .replace(/"/g, "&quot;");
 }
 
-/** @typedef {{ text: string, size?: number, bold?: boolean, indent?: number, spacing?: number }} PdfLine */
-
-/**
- * @param {PdfLine[]} lines
- * @returns {Promise<Buffer>}
- */
-async function buildPdf(lines) {
-  const doc = await PDFDocument.create();
-  const regular = await doc.embedFont(StandardFonts.Helvetica);
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  let page = doc.addPage([595.28, 841.89]);
-  const margin = 50;
-  const bottom = 50;
-  let y = 800;
-
-  for (const line of lines) {
-    const size = line.size || 11;
-    const spacing = line.spacing ?? 1.35;
-    const font = line.bold ? bold : regular;
-    const x = margin + (line.indent || 0);
-
-    if (y < bottom + size) {
-      page = doc.addPage([595.28, 841.89]);
-      y = 800;
-    }
-
-    page.drawText(line.text, {
-      x,
-      y,
-      size,
-      font,
-      color: rgb(0.1, 0.1, 0.1),
-    });
-    y -= size * spacing;
+function styledParagraph(text, style = "Normal") {
+  const escaped = escapeXml(text);
+  if (style === "Title") {
+    return `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="240"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>${escaped}</w:t></w:r></w:p>`;
   }
-
-  return Buffer.from(await doc.save());
+  if (style === "Heading1") {
+    return `<w:p><w:pPr><w:spacing w:before="240" w:after="120"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="26"/><w:color w:val="1F3A8A"/></w:rPr><w:t>${escaped}</w:t></w:r></w:p>`;
+  }
+  if (style === "Heading2") {
+    return `<w:p><w:pPr><w:spacing w:before="180" w:after="80"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="22"/></w:rPr><w:t>${escaped}</w:t></w:r></w:p>`;
+  }
+  if (style === "Muted") {
+    return `<w:p><w:pPr><w:spacing w:after="120"/></w:pPr><w:r><w:rPr><w:color w:val="64748B"/><w:sz w:val="18"/></w:rPr><w:t>${escaped}</w:t></w:r></w:p>`;
+  }
+  return `<w:p><w:pPr><w:spacing w:after="120"/></w:pPr><w:r><w:rPr><w:sz w:val="22"/></w:rPr><w:t xml:space="preserve">${escaped}</w:t></w:r></w:p>`;
 }
 
 /**
- * @param {string[]} paragraphs
+ * @param {Array<{ text: string, style?: string }>} blocks
  * @returns {Promise<Buffer>}
  */
-function buildDocx(paragraphs) {
-  const body = paragraphs
-    .map(
-      (p) =>
-        `<w:p><w:r><w:t xml:space="preserve">${escapeXml(p)}</w:t></w:r></w:p>`
-    )
-    .join("");
+function buildDocx(blocks) {
+  const body = blocks.map((b) => styledParagraph(b.text, b.style || "Normal")).join("");
 
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -99,226 +72,483 @@ function buildDocx(paragraphs) {
   });
 }
 
-const RAPPORT_STAGE_LINES = [
-  { text: "RAPPORT DE STAGE", size: 18, bold: true, spacing: 2 },
-  { text: "Projet de Fin d'Etudes - Gestion documentaire (DMS)", size: 12, spacing: 1.8 },
-  { text: "Stagiaire : Sahar Neguez", spacing: 1.6 },
-  { text: "Encadrant entreprise : M. Karim Ben Salah", spacing: 1.6 },
-  { text: "Ecole : ISAMM - Informatique", spacing: 1.6 },
-  { text: "Periode : fevrier - juin 2025", spacing: 2.2 },
-  { text: "1. Introduction", size: 13, bold: true, spacing: 1.8 },
-  {
-    text: "Ce rapport presente le travail realise au sein de WebSolutions SARL",
-    spacing: 1.4,
-  },
-  {
-    text: "dans le cadre du developpement d'une plateforme DMS (Document Management",
-    spacing: 1.4,
-  },
-  {
-    text: "System) destinee a centraliser, securiser et automatiser le cycle de vie",
-    spacing: 1.4,
-  },
-  { text: "des documents administratifs et metiers.", spacing: 2 },
-  { text: "2. Contexte et objectifs", size: 13, bold: true, spacing: 1.8 },
-  {
-    text: "L'entreprise souhaitait remplacer des echanges par e-mail par un depot",
-    spacing: 1.4,
-  },
-  {
-    text: "unique avec workflows de validation, recherche full-text et archivage.",
-    spacing: 1.4,
-  },
-  {
-    text: "Objectifs : upload securise, controle des acces, audit trail, tableaux de bord.",
-    spacing: 2,
-  },
-  { text: "3. Missions realisees", size: 13, bold: true, spacing: 1.8 },
-  { text: "- Analyse des besoins metiers et redaction du cahier des charges.", indent: 10, spacing: 1.4 },
-  { text: "- Conception de l'architecture (React, Node.js, PostgreSQL/Neon).", indent: 10, spacing: 1.4 },
-  { text: "- Implementation des modules documents, workflows et notifications.", indent: 10, spacing: 1.4 },
-  { text: "- Integration IA : resume, classification et recherche semantique.", indent: 10, spacing: 1.4 },
-  { text: "- Tests, documentation utilisateur et preparation de la soutenance.", indent: 10, spacing: 2 },
-  { text: "4. Technologies utilisees", size: 13, bold: true, spacing: 1.8 },
-  { text: "Frontend : React 19, TypeScript, Tailwind, shadcn/ui.", spacing: 1.4 },
-  { text: "Backend : Express, Prisma, JWT, Resend, pgvector.", spacing: 1.4 },
-  { text: "DevOps : Vite, Neon DB, deploiement conteneurise.", spacing: 2 },
-  { text: "5. Conclusion", size: 13, bold: true, spacing: 1.8 },
-  {
-    text: "Ce stage a permis de mener un projet complet, de la conception a la mise",
-    spacing: 1.4,
-  },
-  {
-    text: "en production d'une solution DMS moderne. Les competences acquises en",
-    spacing: 1.4,
-  },
-  {
-    text: "architecture logicielle et gestion documentaire seront reutilisees en entreprise.",
-    spacing: 2,
-  },
-  { text: "Fait a Tunis, le 15 juin 2025", spacing: 2 },
-  { text: "Signature stagiaire : ____________________", spacing: 1.6 },
-  { text: "Signature encadrant : ____________________", spacing: 1.6 },
-];
+async function buildRapportStagePdf() {
+  const pdf = await new ModernPdfBuilder().init({
+    footerLabel: "ISAMM · WebSolutions · DMS Workspace",
+  });
 
-const FACTURE_LINES = [
-  { text: "Attijari bank - Services Entreprises", size: 16, bold: true, spacing: 2 },
-  { text: "Siege : 25 Avenue Habib Bourguiba, Tunis 1000", spacing: 1.4 },
-  { text: "MF : 1234567/A/M/000 - RIB : 0410 5044 4044 0123 4567 89", spacing: 2 },
-  { text: "FACTURE N° FAC-2025-0847", size: 14, bold: true, spacing: 1.8 },
-  { text: "Date d'emission : 12/03/2025", spacing: 1.4 },
-  { text: "Date d'echeance : 12/04/2025", spacing: 1.4 },
-  { text: "Client : WebSolutions SARL - 14 Rue de la Bourse, Tunis", spacing: 2 },
-  { text: "Designation", bold: true, spacing: 1.6 },
-  { text: "--------------------------------------------------------------", spacing: 1.2 },
-  { text: "Pack compte professionnel Premium (mars 2025)", spacing: 1.4 },
-  { text: "Cartes corporate x 5 unites", spacing: 1.4 },
-  { text: "Frais de tenue de compte", spacing: 1.4 },
-  { text: "Virements SEPA illimites", spacing: 2 },
-  { text: "Montant HT ............................ 2 450,000 TND", spacing: 1.4 },
-  { text: "TVA 19% ...............................   465,500 TND", spacing: 1.4 },
-  { text: "Total TTC ............................. 2 915,500 TND", size: 12, bold: true, spacing: 2 },
-  { text: "Mode de reglement : prelevement bancaire", spacing: 1.4 },
-  { text: "Reference : WS-ATT-2025-Q1", spacing: 2 },
-  { text: "Document genere automatiquement - demo DMS.", size: 9, spacing: 1.4 },
-];
+  pdf.drawBrandHeader({
+    eyebrow: "Rapport de stage · PFE",
+    title: "Rapport de stage",
+    subtitle: "Projet de Fin d'Études — Gestion documentaire intelligente",
+    badge: "2024-2025",
+    meta: [
+      { label: "Stagiaire", value: "Sahar Neguez" },
+      { label: "Encadrant", value: "M. Karim Ben Salah" },
+      { label: "Période", value: "Fév. — Juin 2025" },
+    ],
+  });
 
-const CANDIDATURE_LINES = [
-  { text: "DOSSIER DE CANDIDATURE", size: 16, bold: true, spacing: 2.2 },
-  { text: "Poste : Stage developpement full-stack — WebSolutions", size: 11, bold: true, spacing: 2 },
-  { text: "Candidat : Jean Dupont", size: 12, bold: true, spacing: 1.6 },
-  { text: "Email : jean.dupont@email.fr — Tel : +33 6 12 34 56 78", spacing: 1.4 },
-  { text: "Formation : Master Informatique — ISAMM", spacing: 1.4 },
-  { text: "Disponibilite : fevrier 2025 — duree 6 mois", spacing: 2.2 },
-  { text: "Competences techniques", size: 11, bold: true, spacing: 1.6 },
-  { text: "React, TypeScript, Node.js, PostgreSQL, Git, REST API", spacing: 1.45 },
-  { text: "Experiences", size: 11, bold: true, spacing: 1.6 },
-  { text: "Projet PFE : plateforme DMS avec workflows et recherche IA.", spacing: 1.45 },
-  { text: "Stage ete 2024 : developpement frontend chez une ESN tunisienne.", spacing: 2.2 },
-  { text: "Motivation", size: 11, bold: true, spacing: 1.6 },
-  {
-    text: "Je souhaite rejoindre WebSolutions pour contribuer a des solutions",
-    spacing: 1.45,
-  },
-  {
-    text: "documentaires innovantes et approfondir mes competences en equipe agile.",
-    spacing: 2.2,
-  },
-  { text: "Document genere pour demo workflow candidature — DMS.", size: 9, spacing: 1.4 },
-];
+  pdf.drawTagRow(["React", "Node.js", "PostgreSQL", "Workflows", "IA"]);
 
-const LETTRE_LINES = [
-  { text: "Syrine Mabrouk", size: 12, bold: true, spacing: 1.6 },
-  { text: "12 Avenue Mohamed V, 1002 Tunis", spacing: 1.4 },
-  { text: "syrine.mabrouk@email.tn - +216 98 123 456", spacing: 2.2 },
-  { text: "Objet : Candidature - Stage developpement full-stack", size: 11, bold: true, spacing: 2 },
-  { text: "Madame, Monsieur,", spacing: 1.8 },
-  {
-    text: "Actuellement en derniere annee a l'ISAMM, je souhaite integrer WebSolutions",
-    spacing: 1.45,
-  },
-  {
-    text: "dans le cadre d'un stage de fin d'etudes en developpement web. Votre",
-    spacing: 1.45,
-  },
-  {
-    text: "expertise en solutions documentaires et votre culture d'innovation m'ont",
-    spacing: 1.45,
-  },
-  {
-    text: "motivee a vous soumettre ma candidature.",
-    spacing: 1.8,
-  },
-  {
-    text: "Au cours de mes projets academiques, j'ai developpe des applications React",
-    spacing: 1.45,
-  },
-  {
-    text: "et Node.js avec authentification, API REST et bases PostgreSQL. Je suis",
-    spacing: 1.45,
-  },
-  {
-    text: "autonome, rigoureuse et desireuse d'apprendre les bonnes pratiques en equipe.",
-    spacing: 1.8,
-  },
-  {
-    text: "Disponible des fevrier 2025, je serais honoree de vous rencontrer pour",
-    spacing: 1.45,
-  },
-  {
-    text: "echanger sur ma motivation et mes competences.",
-    spacing: 2,
-  },
-  { text: "Je vous prie d'agreer, Madame, Monsieur, l'expression de mes salutations distinguees.", spacing: 2 },
-  { text: "Syrine Mabrouk", spacing: 1.6 },
-];
+  pdf.drawSectionTitle("1. Introduction", { numbered: true });
+  pdf.drawParagraph(
+    "Ce rapport présente le travail réalisé au sein de WebSolutions SARL dans le cadre du développement d'une plateforme DMS (Document Management System) destinée à centraliser, sécuriser et automatiser le cycle de vie des documents administratifs et métiers."
+  );
 
-const DEVIS_LINES = [
-  { text: "TELNET TELECOM", size: 18, bold: true, spacing: 2 },
-  { text: "Solutions reseau & infrastructure - Tunis", spacing: 1.4 },
-  { text: "Devis commercial N° DEV-2025-0312", size: 14, bold: true, spacing: 2 },
-  { text: "Client : WebSolutions SARL", spacing: 1.4 },
-  { text: "Contact : Karim Ben Salah - karim@websolutions.tn", spacing: 1.4 },
-  { text: "Validite : 30 jours - Date : 20/03/2025", spacing: 2 },
-  { text: "Prestations proposees", size: 12, bold: true, spacing: 1.6 },
-  { text: "--------------------------------------------------------------", spacing: 1.2 },
-  { text: "1. Audit reseau local (2 jours) ............... 1 800 TND HT", spacing: 1.4 },
-  { text: "2. Deploiement firewall Fortinet .............. 4 500 TND HT", spacing: 1.4 },
-  { text: "3. Migration serveur fichiers NAS .............. 2 200 TND HT", spacing: 1.4 },
-  { text: "4. Formation administrateurs (1 jour) ..........   950 TND HT", spacing: 1.4 },
-  { text: "5. Support premium 12 mois .................... 3 600 TND HT", spacing: 2 },
-  { text: "Total HT .................................... 13 050,000 TND", spacing: 1.4 },
-  { text: "Remise commerciale 10% ...................... - 1 305,000 TND", spacing: 1.4 },
-  { text: "Net HT ...................................... 11 745,000 TND", spacing: 1.4 },
-  { text: "TVA 19% ....................................... 2 231,550 TND", spacing: 1.4 },
-  { text: "Total TTC ................................... 13 976,550 TND", size: 12, bold: true, spacing: 2 },
-  { text: "Conditions : acompte 30% a la commande, solde a la livraison.", spacing: 1.4 },
-  { text: "Delai d'intervention estime : 4 semaines apres validation.", spacing: 1.4 },
-  { text: "Document de demonstration - DMS Workspace.", size: 9, spacing: 1.4 },
-];
+  pdf.drawSectionTitle("2. Contexte et objectifs", { numbered: true });
+  pdf.drawBulletList([
+    "Remplacer les échanges par e-mail par un dépôt unique et traçable.",
+    "Mettre en place des workflows de validation multi-niveaux (RH, manager).",
+    "Offrir une recherche full-text et sémantique sur les contenus indexés.",
+    "Intégrer des assistants IA : résumé, classification, extraction de métadonnées.",
+  ]);
 
-const CONTRAT_PARAGRAPHS = [
-  "CONTRAT D'ALTERNANCE PROFESSIONNELLE",
-  "Anne universitaire 2024-2025",
-  "",
-  "Entre les soussignes :",
-  "WebSolutions SARL, 14 Rue de la Bourse, Tunis, representee par M. Karim Ben Salah,",
-  "d'une part,",
-  "Et",
-  "M./Mme Aymen Neguez, ne(e) le 12/08/2001, etudiant(e) a l'ISAMM,",
-  "d'autre part,",
-  "",
-  "Il a ete convenu ce qui suit :",
-  "",
-  "Article 1 - Objet",
-  "Le present contrat a pour objet l'accueil de l'alternant au sein du service",
-  "Developpement Logiciel pour participer au projet DMS Workspace.",
-  "",
-  "Article 2 - Duree",
-  "Du 01/09/2024 au 31/08/2025, rythme alterne : 2 semaines ecole / 2 semaines entreprise.",
-  "",
-  "Article 3 - Missions",
-  "Developpement frontend et backend, tests, documentation technique, participation aux revues de code.",
-  "",
-  "Article 4 - Remuneration",
-  "Grille conventionnelle applicable : 65 % du SMIC les 1re et 2e annees.",
-  "",
-  "Article 5 - Confidentialite",
-  "L'alternant s'engage a respecter la confidentialite des informations auxquelles il accede.",
-  "",
-  "Fait en triple exemplaire a Tunis, le 28/08/2024.",
-  "",
-  "Signature employeur : ____________________    Signature alternant : ____________________",
-];
+  pdf.drawSectionTitle("3. Missions réalisées", { numbered: true });
+  pdf.drawBulletList([
+    "Analyse des besoins métiers et rédaction du cahier des charges fonctionnel.",
+    "Conception de l'architecture technique (React, Express, Neon PostgreSQL).",
+    "Implémentation des modules documents, workflows, notifications et audit.",
+    "Intégration IA : génération batch, hub IA, insights à l'upload.",
+    "Tests, documentation utilisateur et préparation de la soutenance.",
+  ]);
+
+  pdf.drawSectionTitle("4. Stack technique", { numbered: true });
+  pdf.drawTable(
+    ["Couche", "Technologies"],
+    [
+      ["Frontend", "React 19, TypeScript, Tailwind, shadcn/ui"],
+      ["Backend", "Express, JWT, Resend, pgvector"],
+      ["Données", "PostgreSQL (Neon), embeddings"],
+      ["DevOps", "Vite, Docker, CI"],
+    ],
+    { colWidths: [120, 375] }
+  );
+
+  pdf.drawSectionTitle("5. Conclusion", { numbered: true });
+  pdf.drawParagraph(
+    "Ce stage a permis de mener un projet complet, de la conception à la mise en production d'une solution DMS moderne. Les compétences acquises en architecture logicielle et gestion documentaire seront réutilisées en entreprise."
+  );
+
+  pdf.drawSectionTitle("6. Conformité RGPD", { numbered: true });
+  pdf.drawParagraph(
+    "Une analyse de conformité a identifié la nécessité de formaliser une politique de rétention des documents RH et financiers. Recommandation : archivage 5 ans pour les contrats, 10 ans pour les factures, anonymisation des candidatures refusées après 24 mois."
+  );
+
+  pdf.drawSectionTitle("Références métier", { numbered: false });
+  pdf.drawParagraph(
+    "Date: 15/06/2026 — Client: WebSolutions SARL — Poste: Stage développement full-stack — Type: Rapport de stage PFE."
+  );
+
+  pdf.drawSignatureBlock([
+    "Fait à Tunis, le 15 juin 2025",
+    "Signature stagiaire : ___________________________",
+    "Signature encadrant : ___________________________",
+  ]);
+
+  return pdf.toBuffer();
+}
+
+async function buildFacturePdf() {
+  const pdf = await new ModernPdfBuilder().init({
+    footerLabel: "Attijari bank · Services Entreprises · Démo DMS",
+  });
+
+  pdf.drawBrandHeader({
+    eyebrow: "Attijari bank",
+    title: "FACTURE",
+    subtitle: "N° FAC-2026-0847",
+    badge: "TTC",
+    meta: [
+      { label: "Émission", value: "15/04/2026" },
+      { label: "Échéance", value: "15/06/2026" },
+      { label: "Client", value: "WebSolutions SARL" },
+    ],
+  });
+
+  pdf.drawParagraph("Fournisseur: Attijari Bank — 25 Avenue Habib Bourguiba, Tunis 1000 — MF : 1234567/A/M/000", {
+    size: 9,
+    muted: true,
+  });
+  pdf.drawParagraph("Client: WebSolutions SARL — 14 Rue de la Bourse, Tunis — Contact : karim@websolutions.tn", {
+    size: 9,
+    muted: true,
+  });
+
+  pdf.drawDivider();
+
+  pdf.drawTable(
+    ["Désignation", "Qté", "P.U. HT", "Total HT"],
+    [
+      ["Pack compte professionnel Premium (mars 2025)", "1", "1 800,000", "1 800,000"],
+      ["Cartes corporate", "5", "90,000", "450,000"],
+      ["Frais de tenue de compte", "1", "120,000", "120,000"],
+      ["Virements SEPA illimités", "1", "80,000", "80,000"],
+    ],
+    { colWidths: [255, 40, 85, 85] }
+  );
+
+  pdf.drawTotals([
+    { label: "Montant HT", value: "2 450,000 TND" },
+    { label: "TVA 19 %", value: "465,500 TND" },
+    { label: "Total TTC", value: "2 915,500 TND" },
+  ]);
+
+  pdf.drawParagraph("Montant TTC: 2915.50 TND — N° document: FAC-2026-0847 — Échéance: 15/06/2026 — Date: 15/04/2026", {
+    size: 9,
+  });
+  pdf.drawParagraph("Mode de règlement : prélèvement bancaire — IBAN TN59 1234 5678 9012 3456 7890 — Réf. WS-ATT-2026-Q2", {
+    size: 9,
+  });
+  pdf.drawParagraph("Document généré automatiquement — démonstration DMS Workspace.", {
+    size: 8,
+    muted: true,
+  });
+
+  return pdf.toBuffer();
+}
+
+async function buildCandidaturePdf() {
+  const pdf = await new ModernPdfBuilder().init({
+    footerLabel: "Recrutement · WebSolutions · Workflow candidature",
+  });
+
+  pdf.drawBrandHeader({
+    eyebrow: "Dossier RH",
+    title: "Dossier de candidature",
+    subtitle: "Stage développement full-stack",
+    badge: "PRIORITÉ",
+    meta: [
+      { label: "Candidat", value: "Jean Dupont" },
+      { label: "Formation", value: "Master Info — ISAMM" },
+      { label: "Disponibilité", value: "Fév. 2025 · 6 mois" },
+    ],
+  });
+
+  pdf.drawTagRow(["React", "TypeScript", "Node.js", "PostgreSQL", "Git"]);
+
+  pdf.drawSectionTitle("Profil");
+  pdf.drawParagraph(
+    "Candidat: Jean Dupont — Poste: Stage développement full-stack — jean.dupont@email.fr · +33 6 12 34 56 78"
+  );
+  pdf.drawParagraph(
+    "Motivé par les solutions documentaires et l'innovation produit. Formation Master Info — ISAMM."
+  );
+
+  pdf.drawSectionTitle("Compétences techniques");
+  pdf.drawBulletList([
+    "Frontend : React, TypeScript, Tailwind, composants accessibles.",
+    "Backend : Node.js, Express, API REST, authentification JWT.",
+    "Data : PostgreSQL, modélisation, recherche full-text.",
+    "Outils : Git, Docker, méthodes agiles, revues de code.",
+  ]);
+
+  pdf.drawSectionTitle("Expériences");
+  pdf.drawBulletList([
+    "Projet PFE : plateforme DMS avec workflows et recherche IA.",
+    "Stage été 2024 : développement frontend chez une ESN tunisienne.",
+  ]);
+
+  pdf.drawSectionTitle("Motivation");
+  pdf.drawParagraph(
+    "Je souhaite rejoindre WebSolutions pour contribuer à des solutions documentaires innovantes, approfondir mes compétences en équipe agile et participer à des projets à fort impact métier."
+  );
+
+  pdf.drawParagraph("Document généré pour démo workflow « Candidature — Validation complète ».", {
+    size: 8,
+    muted: true,
+  });
+
+  return pdf.toBuffer();
+}
+
+async function buildLettrePdf() {
+  const pdf = await new ModernPdfBuilder().init({
+    footerLabel: "Candidature · WebSolutions",
+  });
+
+  pdf.drawBrandHeader({
+    eyebrow: "Lettre de motivation",
+    title: "Syrine Mabrouk",
+    subtitle: "Candidature — Stage développement full-stack",
+    badge: "2026",
+  });
+
+  pdf.drawParagraph("Poste: Stage développement full-stack — Date: 10/04/2026", { size: 9, muted: true });
+
+  pdf.drawParagraph("12 Avenue Mohamed V, 1002 Tunis", { size: 9, muted: true });
+  pdf.drawParagraph("syrine.mabrouk@email.tn · +216 98 123 456", { size: 9, muted: true });
+
+  pdf.drawDivider();
+
+  pdf.drawParagraph("Madame, Monsieur,", { size: 11 });
+  pdf.drawParagraph(
+    "Actuellement en dernière année à l'ISAMM, je souhaite intégrer WebSolutions dans le cadre d'un stage de fin d'études en développement web. Votre expertise en solutions documentaires et votre culture d'innovation m'ont motivée à vous soumettre ma candidature."
+  );
+  pdf.drawParagraph(
+    "Au cours de mes projets académiques, j'ai développé des applications React et Node.js avec authentification, API REST et bases PostgreSQL. Je suis autonome, rigoureuse et désireuse d'apprendre les bonnes pratiques en équipe."
+  );
+  pdf.drawParagraph(
+    "Disponible dès février 2025, je serais honorée de vous rencontrer pour échanger sur ma motivation et mes compétences."
+  );
+  pdf.drawParagraph(
+    "Je vous prie d'agréer, Madame, Monsieur, l'expression de mes salutations distinguées."
+  );
+
+  pdf.drawSignatureBlock(["Syrine Mabrouk"]);
+
+  return pdf.toBuffer();
+}
+
+async function buildDevisPdf() {
+  const pdf = await new ModernPdfBuilder().init({
+    footerLabel: "TELNET TELECOM · Devis commercial",
+  });
+
+  pdf.drawBrandHeader({
+    eyebrow: "TELNET TELECOM",
+    title: "Devis commercial",
+    subtitle: "N° DEV-2026-0312",
+    badge: "30 JOURS",
+    meta: [
+      { label: "Client", value: "WebSolutions SARL" },
+      { label: "Contact", value: "Karim Ben Salah" },
+      { label: "Date", value: "20/04/2026" },
+    ],
+  });
+
+  pdf.drawTable(
+    ["Prestation", "Durée", "Montant HT"],
+    [
+      ["Audit réseau local", "2 jours", "1 800 TND"],
+      ["Déploiement firewall Fortinet", "—", "4 500 TND"],
+      ["Migration serveur fichiers NAS", "—", "2 200 TND"],
+      ["Formation administrateurs", "1 jour", "950 TND"],
+      ["Support premium 12 mois", "—", "3 600 TND"],
+    ],
+    { colWidths: [280, 80, 95] }
+  );
+
+  pdf.drawTotals([
+    { label: "Total HT", value: "13 050,000 TND" },
+    { label: "Remise 10 %", value: "- 1 305,000 TND" },
+    { label: "Net HT", value: "11 745,000 TND" },
+    { label: "TVA 19 %", value: "2 231,550 TND" },
+    { label: "Total TTC", value: "13 976,550 TND" },
+  ]);
+
+  pdf.drawParagraph(
+    "Montant TTC: 13976.55 TND — N° document: DEV-2026-0312 — Client: WebSolutions SARL — Date: 20/04/2026 — Validité: 20/05/2026",
+    { size: 9 }
+  );
+
+  pdf.drawBulletList([
+    "Conditions : acompte 30 % à la commande, solde à la livraison.",
+    "Délai d'intervention estimé : 4 semaines après validation.",
+  ]);
+
+  return pdf.toBuffer();
+}
+
+async function buildContratDocx() {
+  return buildDocx([
+    { text: "CONTRAT D'ALTERNANCE PROFESSIONNELLE", style: "Title" },
+    { text: "Année universitaire 2025-2026 — Date: 28/08/2025", style: "Muted" },
+    { text: "Client: WebSolutions SARL — Fournisseur: ISAMM", style: "Muted" },
+    { text: "", style: "Normal" },
+    { text: "Entre les soussignés", style: "Heading1" },
+    {
+      text: "WebSolutions SARL, 14 Rue de la Bourse, Tunis, représentée par M. Karim Ben Salah, d'une part,",
+    },
+    { text: "Et", style: "Muted" },
+    {
+      text: "M./Mme Aymen Neguez, né(e) le 12/08/2001, étudiant(e) à l'ISAMM, d'autre part,",
+    },
+    { text: "Il a été convenu ce qui suit :", style: "Heading2" },
+    { text: "Article 1 — Objet", style: "Heading2" },
+    {
+      text: "Le présent contrat a pour objet l'accueil de l'alternant au sein du service Développement Logiciel pour participer au projet DMS Workspace.",
+    },
+    { text: "Article 2 — Durée", style: "Heading2" },
+    {
+      text: "Du 01/09/2025 au 31/08/2026, rythme alterné : 2 semaines école / 2 semaines entreprise.",
+    },
+    { text: "Article 3 — Missions", style: "Heading2" },
+    {
+      text: "Développement frontend et backend, tests, documentation technique, participation aux revues de code et intégration des modules IA.",
+    },
+    { text: "Article 4 — Rémunération", style: "Heading2" },
+    { text: "Grille conventionnelle applicable : 65 % du SMIC les 1re et 2e années." },
+    { text: "Article 5 — Confidentialité", style: "Heading2" },
+    {
+      text: "L'alternant s'engage à respecter la confidentialité des informations auxquelles il accède.",
+    },
+    { text: "Fait en triple exemplaire à Tunis, le 28/08/2025.", style: "Muted" },
+    { text: "Signature employeur : ____________________    Signature alternant : ____________________" },
+  ]);
+}
+
+async function buildFactureDuplicatePdf() {
+  const pdf = await new ModernPdfBuilder().init({
+    footerLabel: "Attijari bank · Facture dupliquée — test IA déduplication",
+  });
+
+  pdf.drawBrandHeader({
+    eyebrow: "Attijari bank",
+    title: "FACTURE",
+    subtitle: "N° FAC-2026-0848",
+    badge: "TTC",
+    meta: [
+      { label: "Émission", value: "16/04/2026" },
+      { label: "Échéance", value: "16/06/2026" },
+      { label: "Client", value: "WebSolutions SARL" },
+    ],
+  });
+
+  pdf.drawParagraph("Fournisseur: Attijari Bank — Client: WebSolutions SARL — karim@websolutions.tn", {
+    size: 9,
+    muted: true,
+  });
+
+  pdf.drawTable(
+    ["Désignation", "Qté", "P.U. HT", "Total HT"],
+    [
+      ["Pack compte professionnel Premium (avril 2026)", "1", "1 800,000", "1 800,000"],
+      ["Cartes corporate", "5", "90,000", "450,000"],
+      ["Frais de tenue de compte", "1", "120,000", "120,000"],
+      ["Virements SEPA illimités", "1", "80,000", "80,000"],
+    ],
+    { colWidths: [255, 40, 85, 85] }
+  );
+
+  pdf.drawTotals([
+    { label: "Montant HT", value: "2 450,000 TND" },
+    { label: "TVA 19 %", value: "465,500 TND" },
+    { label: "Total TTC", value: "2 915,500 TND" },
+  ]);
+
+  pdf.drawParagraph("Montant TTC: 2915.50 TND — N° document: FAC-2026-0848 — Échéance: 16/06/2026 — Date: 16/04/2026", {
+    size: 9,
+  });
+
+  return pdf.toBuffer();
+}
+
+async function buildPolitiqueRgpdPdf() {
+  const pdf = await new ModernPdfBuilder().init({
+    footerLabel: "WebSolutions · Politique interne · Conformité",
+  });
+
+  pdf.drawBrandHeader({
+    eyebrow: "Conformité & RGPD",
+    title: "Politique de rétention des documents",
+    subtitle: "Réf. POL-RGPD-2026-01",
+    badge: "VIGUEUR",
+    meta: [
+      { label: "Version", value: "1.2" },
+      { label: "Date", value: "01/01/2026" },
+      { label: "DPO", value: "dpo@websolutions.tn" },
+    ],
+  });
+
+  pdf.drawSectionTitle("1. Objet");
+  pdf.drawParagraph(
+    "Cette politique définit les durées de conservation, les bases légales et les mesures de sécurité applicables aux documents gérés dans le DMS Workspace (contrats, factures, candidatures, rapports)."
+  );
+
+  pdf.drawSectionTitle("2. Durées de rétention");
+  pdf.drawBulletList([
+    "Contrats et conventions : 5 ans après la fin de la relation contractuelle.",
+    "Factures et pièces comptables : 10 ans (obligation fiscale).",
+    "Candidatures RH : 24 mois pour les dossiers non retenus, puis anonymisation.",
+    "Rapports internes : 3 ans, sauf valeur probatoire.",
+  ]);
+
+  pdf.drawSectionTitle("3. Droits des personnes");
+  pdf.drawParagraph(
+    "Toute personne concernée peut exercer ses droits d'accès, rectification, effacement et portabilité via dpo@websolutions.tn. Délai de réponse : 30 jours."
+  );
+
+  pdf.drawSectionTitle("4. Sécurité");
+  pdf.drawBulletList([
+    "Chiffrement des fichiers sensibles et journalisation des accès (audit logs).",
+    "Minimisation des données personnelles dans les métadonnées indexées.",
+    "Revue annuelle des partages et liens publics actifs.",
+  ]);
+
+  pdf.drawParagraph(
+    "Client: WebSolutions SARL — Date: 01/01/2026 — Poste: DPO — Type: Politique conformité RGPD.",
+    { size: 9, muted: true }
+  );
+
+  return pdf.toBuffer();
+}
+
+async function buildContratRisquePdf() {
+  const pdf = await new ModernPdfBuilder().init({
+    footerLabel: "WebSolutions · Contrat prestation — relecture juridique",
+  });
+
+  pdf.drawBrandHeader({
+    eyebrow: "Contrat prestation IT",
+    title: "CONTRAT DE PRESTATION",
+    subtitle: "Fournisseur externe — Projet DMS",
+    badge: "RISQUE",
+    meta: [
+      { label: "Client", value: "WebSolutions SARL" },
+      { label: "Fournisseur", value: "TechPartner SARL" },
+      { label: "Date", value: "01/03/2026" },
+    ],
+  });
+
+  pdf.drawSectionTitle("Article 1 — Objet");
+  pdf.drawParagraph(
+    "Prestation d'intégration IA et workflows documentaires pour la plateforme DMS Workspace."
+  );
+
+  pdf.drawSectionTitle("Article 2 — Pénalités");
+  pdf.drawParagraph(
+    "En cas de retard de livraison, une pénalité de 2 % du montant TTC par semaine de retard sera appliquée sans plafond."
+  );
+
+  pdf.drawSectionTitle("Article 3 — Résiliation");
+  pdf.drawParagraph(
+    "Le client se réserve le droit de résiliation unilatérale immédiate en cas de manquement grave, sans indemnité due au prestataire."
+  );
+
+  pdf.drawSectionTitle("Article 4 — Non-concurrence");
+  pdf.drawParagraph(
+    "Le prestataire s'engage à une clause de non-concurrence de 24 mois sur le secteur DMS en Tunisie."
+  );
+
+  pdf.drawSectionTitle("Article 5 — Confidentialité");
+  pdf.drawParagraph(
+    "Obligation de confidentialité perpétuelle sur toutes les données, codes sources et documents clients."
+  );
+
+  pdf.drawParagraph(
+    "Montant TTC: 45000.00 TND — N° document: CTR-2026-0091 — Échéance: 01/03/2026 — Client: WebSolutions SARL",
+    { size: 9 }
+  );
+  pdf.drawParagraph("Document contractuel sans signature visible — brouillon en attente de validation juridique.", {
+    size: 8,
+    muted: true,
+  });
+
+  return pdf.toBuffer();
+}
 
 /** @type {Record<string, () => Promise<Buffer>>} */
 const BUILDERS = {
-  "Rapport_Stage_Sahar_Neguez.pdf": () => buildPdf(RAPPORT_STAGE_LINES),
-  "Facture_ATTIJARI_BANK.pdf": () => buildPdf(FACTURE_LINES),
-  "Lettre_Motivation_Syrine.pdf": () => buildPdf(LETTRE_LINES),
-  "Dossier_Candidature_Dupont.pdf": () => buildPdf(CANDIDATURE_LINES),
-  "Devis_Commercial_TELNET.pdf": () => buildPdf(DEVIS_LINES),
-  "Contrat_Alternance_2025.docx": () => buildDocx(CONTRAT_PARAGRAPHS),
+  "Rapport_Stage_Sahar_Neguez.pdf": buildRapportStagePdf,
+  "Facture_ATTIJARI_BANK.pdf": buildFacturePdf,
+  "Facture_Duplicate_ATTIJARI.pdf": buildFactureDuplicatePdf,
+  "Lettre_Motivation_Syrine.pdf": buildLettrePdf,
+  "Dossier_Candidature_Dupont.pdf": buildCandidaturePdf,
+  "Devis_Commercial_TELNET.pdf": buildDevisPdf,
+  "Contrat_Alternance_2025.docx": buildContratDocx,
+  "Politique_Retention_RGPD.pdf": buildPolitiqueRgpdPdf,
+  "Contrat_Prestation_Risque.pdf": buildContratRisquePdf,
 };
 
 async function buildDemoFileBuffer(originalName) {
@@ -331,6 +561,6 @@ async function buildDemoFileBuffer(originalName) {
 
 module.exports = {
   buildDemoFileBuffer,
-  buildPdf,
+  buildModernTextPdf,
   buildDocx,
 };

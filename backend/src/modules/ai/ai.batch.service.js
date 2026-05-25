@@ -1,7 +1,7 @@
 const archiver = require("archiver");
-const { PDFDocument, StandardFonts, rgb } = require("pdf-lib");
 const { PassThrough } = require("stream");
 const { query } = require("../../config/db");
+const { buildModernTextPdf } = require("../documents/demo-document-builder");
 const {
   assertQuota,
   callOpenAI,
@@ -217,55 +217,13 @@ function safeFilename(base, index) {
 }
 
 async function textToPdfBuffer(title, body) {
-  const pdfDoc = await PDFDocument.create();
-  let page = pdfDoc.addPage([595, 842]);
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const margin = 50;
-  let y = 800;
-  const maxWidth = 495;
-  const lineHeight = 14;
-
-  page.drawText(String(title || "Document"), {
-    x: margin,
-    y,
-    size: 16,
-    font: fontBold,
-    color: rgb(0.15, 0.2, 0.4),
+  return buildModernTextPdf({
+    title,
+    subtitle: `Généré le ${new Date().toLocaleDateString("fr-FR")}`,
+    body,
+    badge: "BATCH IA",
+    footerLabel: "DMS Workspace · Génération batch CSV",
   });
-  y -= 28;
-
-  const paragraphs = String(body || "").split(/\n/);
-  for (const para of paragraphs) {
-    const words = para.split(/\s+/);
-    let line = "";
-    for (const word of words) {
-      const test = line ? `${line} ${word}` : word;
-      const width = font.widthOfTextAtSize(test, 11);
-      if (width > maxWidth && line) {
-        if (y < 60) {
-          page = pdfDoc.addPage([595, 842]);
-          y = 800;
-        }
-        page.drawText(line, { x: margin, y, size: 11, font, color: rgb(0.1, 0.1, 0.1) });
-        y -= lineHeight;
-        line = word;
-      } else {
-        line = test;
-      }
-    }
-    if (line) {
-      if (y < 60) {
-        page = pdfDoc.addPage([595, 842]);
-        y = 800;
-      }
-      page.drawText(line, { x: margin, y, size: 11, font, color: rgb(0.1, 0.1, 0.1) });
-      y -= lineHeight;
-    }
-    y -= 6;
-  }
-
-  return Buffer.from(await pdfDoc.save());
 }
 
 async function resolveTemplate({ templateId, templateKind }) {

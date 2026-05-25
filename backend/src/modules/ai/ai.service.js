@@ -179,22 +179,37 @@ function buildDemoContratFromVars(batchVars, userPrompt) {
   const poste = readBatchVar(batchVars, "poste", "à définir");
   const montant = readBatchVar(batchVars, "montant", "à définir");
   const contexte = readBatchVar(batchVars, "contexte", "");
+  const today = new Date().toLocaleDateString("fr-FR");
 
   return [
-    "CONTRAT DE TRAVAIL (projet — mode démo)",
+    "CONTRAT DE TRAVAIL",
+    `Réf. DMS-${Date.now().toString().slice(-6)} · ${today}`,
     "",
-    `Entre la société ${entreprise} et ${nom}${email ? ` (${email})` : ""}.`,
+    "PARTIES",
+    `Employeur : ${entreprise}`,
+    `Salarié : ${nom}${email ? ` (${email})` : ""}`,
     "",
-    "Article 1 — Poste",
-    `Le salarié est engagé en qualité de ${poste}.`,
+    "Article 1 — Objet et prise de poste",
+    `Le salarié est engagé en qualité de ${poste}, dans le respect de la législation du travail en vigueur et des usages de l'entreprise.`,
     "",
     "Article 2 — Rémunération",
-    `Rémunération annuelle brute indicative : ${montant} €.`,
+    `Rémunération annuelle brute indicative : ${montant} €, payable selon les échéances définies par la paie interne.`,
     "",
-    "Article 3 — Contexte",
-    contexte || extractUserContextFromPrompt(userPrompt) || "Conditions usuelles du secteur.",
+    "Article 3 — Missions principales",
+    "- Participation aux projets confiés par la direction.",
+    "- Respect des procédures qualité, sécurité et confidentialité.",
+    "- Collaboration avec les équipes métier et techniques.",
+    "",
+    "Article 4 — Contexte particulier",
+    contexte || extractUserContextFromPrompt(userPrompt) || "Conditions usuelles du secteur et du poste visé.",
+    "",
+    "Article 5 — Durée et clauses",
+    "Contrat établi à titre de démonstration DMS. Les clauses définitives seront validées par les services juridiques.",
     "",
     "Fait pour servir et valoir ce que de droit.",
+    "",
+    "Signature employeur : ____________________",
+    "Signature salarié : ____________________",
   ].join("\n");
 }
 
@@ -202,14 +217,29 @@ function buildDemoDevisFromVars(batchVars) {
   const nom = readBatchVar(batchVars, "nom", "Client");
   const entreprise = readBatchVar(batchVars, "entreprise", "—");
   const montant = readBatchVar(batchVars, "montant", "—");
+  const poste = readBatchVar(batchVars, "poste", "prestation");
+  const today = new Date().toLocaleDateString("fr-FR");
+
   return [
-    "DEVIS COMMERCIAL (mode démo)",
+    "DEVIS COMMERCIAL",
+    `N° DEV-${Date.now().toString().slice(-5)} · Validité 30 jours · ${today}`,
     "",
-    `Client : ${nom}`,
+    "CLIENT",
+    `Nom : ${nom}`,
     `Société : ${entreprise}`,
-    `Montant proposé : ${montant} € HT`,
     "",
-    "Validité : 30 jours. Conditions de paiement : 30 % à la commande, solde à livraison.",
+    "PRESTATIONS PROPOSÉES",
+    `1. ${poste} .................................... ${montant} € HT`,
+    "2. Accompagnement et mise en service ........... Inclus",
+    "3. Support post-livraison (30 jours) ........... Inclus",
+    "",
+    "CONDITIONS",
+    "- Paiement : 30 % à la commande, solde à la livraison.",
+    "- Délai indicatif : 2 à 4 semaines selon disponibilité.",
+    "- Devis établi en mode démonstration DMS Workspace.",
+    "",
+    `Montant proposé : ${montant} € HT`,
+    "TVA applicable selon réglementation en vigueur.",
   ].join("\n");
 }
 
@@ -217,18 +247,26 @@ function buildDemoLettreFromVars(batchVars) {
   const nom = readBatchVar(batchVars, "nom", "Candidat");
   const entreprise = readBatchVar(batchVars, "entreprise", "votre entreprise");
   const poste = readBatchVar(batchVars, "poste", "le poste proposé");
+  const contexte = readBatchVar(batchVars, "contexte", "");
+
   return [
-    `Lettre de motivation — ${nom}`,
+    `LETTRE DE MOTIVATION — ${nom}`,
+    `Objet : Candidature pour ${poste}`,
     "",
     "Madame, Monsieur,",
     "",
-    `Je souhaite rejoindre ${entreprise} pour le poste de ${poste}.`,
-    "Mon parcours et ma motivation correspondent aux attentes exprimées dans votre offre.",
+    `Je souhaite rejoindre ${entreprise} pour le poste de ${poste}. Mon parcours et ma motivation correspondent aux attentes exprimées dans votre offre.`,
+    contexte ? `\n${contexte}` : "",
     "",
-    "Je reste à votre disposition pour un entretien.",
+    "Au cours de mes expériences, j'ai développé une rigueur technique, un sens de l'organisation et une capacité à travailler en équipe sur des projets exigeants.",
     "",
-    `Cordialement,\n${nom}`,
-  ].join("\n");
+    "Je reste à votre disposition pour un entretien et vous remercie pour l'attention portée à ma candidature.",
+    "",
+    "Cordialement,",
+    nom,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function buildDemoEmailProfessional(userPrompt, batchVars = null) {
@@ -351,13 +389,16 @@ function buildDemoEmailProfessional(userPrompt, batchVars = null) {
     "",
     intro,
     "",
-    "Points clés :",
-    ...bodyLines.slice(0, 5),
+    "Points clés",
+    ...bodyLines.slice(0, 5).map((l) => (l.startsWith("-") ? l : `- ${l}`)),
     "",
     conclusion,
     "",
     closing,
     signature,
+    "",
+    "—",
+    "Document généré par DMS Workspace (mode démonstration IA).",
   ].join("\n");
 }
 
@@ -371,27 +412,33 @@ function buildDemoReportDocumentaire(userPrompt) {
     context.trim().slice(0, 72) || "Synthèse du besoin";
 
   return [
-    `Rapport synthétique — ${titre}`,
+    `RAPPORT SYNTHÉTIQUE`,
+    titre,
+    `Classification : ${det.category} · ${new Date().toLocaleDateString("fr-FR")}`,
     "",
     "1. Contexte et périmètre",
     `Le sujet à traiter est : ${context || "(non précisé)"}.`,
-    `Classification indicative : ${det.category} (${det.tags.join(", ") || "—"}).`,
+    `Tags associés : ${det.tags.join(", ") || "—"}.`,
     "",
     "2. Synthèse des éléments saillants",
     `- Thèmes dominants : ${kws.slice(0, 6).join(", ") || "à préciser avec davantage de contexte"}.`,
-    `- Lecture métier : structurer objectifs, contraintes et livrables attendus.`,
+    "- Lecture métier : structurer objectifs, contraintes et livrables attendus.",
+    "- Public cible : équipes opérationnelles et direction.",
     "",
     "3. Risques / points de vigilance",
     "- Vérifier complétude des données avant diffusion officielle.",
     "- Mentionner les hypothèses si le texte source reste partiel.",
+    "- Anticiper les dépendances planning et ressources.",
     "",
     "4. Recommandations",
-    "- Définir jalons et responsabilités (notamment pour un projet de fin d'études / stage si applicable).",
-    "- Mettre à jour le document après validation terrain.",
+    "- Définir jalons et responsabilités (PFE / stage si applicable).",
+    "- Documenter les décisions et mettre à jour après validation terrain.",
+    "- Lancer un workflow d'approbation si le document est contractuel ou financier.",
     "",
     "5. Prochaines étapes",
     "- Enrichir le contexte (objectifs mesurables, périmètre, dates).",
     "- Valider avec le référent avant publication.",
+    "- Archiver la version validée dans le DMS.",
   ].join("\n");
 }
 
@@ -401,15 +448,19 @@ function buildDemoLinkedIn(userPrompt) {
   const hook = context.trim().slice(0, 140) || "Partager une initiative utile et concrète";
 
   return [
-    `💡 ${hook}`,
+    "POST LINKEDIN — Brouillon",
     "",
-    "Pourquoi c’est important :",
-    `- ${kws[0] || "Clarté"} — ${kws[1] || "impact mesurable"}`,
-    `- Une approche pragmatique : prioriser la valeur pour les équipes et les utilisateurs finaux.`,
+    hook,
     "",
-    "👉 Une question pour votre réseau : comment formalisez-vous ce type de sujet chez vous ?",
+    "Pourquoi c'est important",
+    `- ${kws[0] || "Clarté"} : impact mesurable sur la productivité.`,
+    `- ${kws[1] || "Collaboration"} : aligner les équipes autour d'un référentiel unique.`,
+    "- Une approche pragmatique : prioriser la valeur pour les utilisateurs finaux.",
     "",
-    "#gestiondocumentaire #productivité #collaboration #innovation",
+    "Appel à discussion",
+    "Comment formalisez-vous ce type de sujet dans votre organisation ?",
+    "",
+    "#gestiondocumentaire #productivité #collaboration #innovation #DMS",
   ].join("\n");
 }
 
@@ -418,20 +469,22 @@ function buildDemoNoteInterne(userPrompt) {
   const kws = topKeywords(context, 6);
 
   return [
-    "NOTE INTERNE — Synthèse",
-    `Date : ${new Date().toLocaleString("fr-FR")}`,
+    "NOTE INTERNE",
+    `Réf. NOTE-${Date.now().toString().slice(-5)} · ${new Date().toLocaleString("fr-FR")}`,
     "",
     "Objet",
     context.trim().slice(0, 120) || "Information interne",
     "",
     "Décisions / actions",
     `- Suivi : ${kws[0] || "à préciser"}`,
-    `- Échéance : à définir`,
+    "- Échéance : à définir avec le responsable de service",
+    "- Diffusion : équipes concernées uniquement",
     "",
-    "Détail",
+    "Synthèse",
     `Points associés au contexte : ${kws.slice(0, 5).join(", ") || "—"}.`,
     "",
-    "Diffusion : équipes concernées uniquement.",
+    "Prochaine revue",
+    "Point d'étape prévu lors de la réunion hebdomadaire.",
   ].join("\n");
 }
 
@@ -758,6 +811,28 @@ async function getUsageAndQuota(userId) {
   };
 }
 
+async function resetUserQuota(userId) {
+  await ensureQuota(userId);
+  await query(
+    `UPDATE ai_quotas
+     SET used_today = 0, last_reset_date = CURRENT_DATE
+     WHERE user_id = ?`,
+    [userId]
+  );
+  return getUsageAndQuota(userId);
+}
+
+async function clearUserAiHistory(userId) {
+  await query(`DELETE FROM ai_usages WHERE user_id = ?`, [userId]);
+  await query(`DELETE FROM ai_generations WHERE user_id = ?`, [userId]);
+}
+
+async function resetUserAiState(userId) {
+  await clearUserAiHistory(userId);
+  const quota = await resetUserQuota(userId);
+  return quota;
+}
+
 async function ensureDefaultTemplates(userId) {
   const count = await query("SELECT COUNT(*) AS c FROM ai_templates WHERE is_custom = 0");
   if (Number(count.rows[0]?.c || 0) > 0) return;
@@ -787,6 +862,9 @@ module.exports = {
   ensureDefaultTemplates,
   estimateTokens,
   getUsageAndQuota,
+  resetUserQuota,
+  clearUserAiHistory,
+  resetUserAiState,
   getSchema,
   logSql,
 };

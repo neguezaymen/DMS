@@ -3,12 +3,12 @@ import { NavLink, Outlet, Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Bell,
-  Brain,
   Building2,
   ClipboardList,
   Files,
   Gauge,
   Inbox,
+  LayoutGrid,
   ListTree,
   History,
   Sliders,
@@ -16,7 +16,6 @@ import {
   UserCircle,
   Users,
   ClipboardCheck,
-  Sparkles,
   LogOut,
   Settings,
   ChevronDown,
@@ -97,10 +96,7 @@ const NAV_SECTIONS: NavSection[] = [
   },
   {
     titleKey: 'nav.section.ai',
-    items: [
-      { icon: Brain, labelKey: 'nav.aiStudio', to: '/ai-studio' },
-      { icon: Sparkles, labelKey: 'nav.aiBatch', to: '/ai-studio/batch' },
-    ],
+    items: [{ icon: LayoutGrid, labelKey: 'nav.aiHub', to: '/ai' }],
   },
   {
     titleKey: 'nav.section.external',

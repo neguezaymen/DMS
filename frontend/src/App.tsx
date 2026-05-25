@@ -22,6 +22,11 @@ import RequestUploadPage from './pages/RequestUploadPage'
 import UploadRequestsPage from './pages/UploadRequestsPage'
 import NotificationsPage from './pages/NotificationsPage'
 import AIStudioPage from './pages/AIStudioPage'
+import AIHubPage from './pages/AIHubPage'
+import AICompliancePage from './pages/AICompliancePage'
+import AICorpusQAPage from './pages/AICorpusQAPage'
+import AIMetadataPage from './pages/AIMetadataPage'
+import AIWorkflowRoutingPage from './pages/AIWorkflowRoutingPage'
 import AIBatchPage from './pages/AIBatchPage'
 import AuditLogsPage from './pages/AuditLogsPage'
 import TrashPage from './pages/TrashPage'
@@ -57,6 +62,11 @@ function App() {
           <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/audit-logs" element={<AuditLogsPage />} />
           <Route path="/trash" element={<TrashPage />} />
+          <Route path="/ai" element={<AIHubPage />} />
+          <Route path="/ai/compliance" element={<AICompliancePage />} />
+          <Route path="/ai/corpus-qa" element={<AICorpusQAPage />} />
+          <Route path="/ai/metadata" element={<AIMetadataPage />} />
+          <Route path="/ai/workflow-routing" element={<AIWorkflowRoutingPage />} />
           <Route path="/ai-studio" element={<AIStudioPage />} />
           <Route path="/ai-studio/batch" element={<AIBatchPage />} />
           <Route path="/documents" element={<DocumentsListPage />} />

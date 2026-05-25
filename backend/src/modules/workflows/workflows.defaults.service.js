@@ -42,6 +42,12 @@ const DEFAULT_WORKFLOWS = [
       { stepOrder: 2, roleName: "manager", dueHours: 72, reminderHours: 24 },
     ],
   },
+  {
+    name: "Devis – Validation commerciale",
+    description: "Validation manager pour devis B2B",
+    documentCategory: "Devis",
+    steps: [{ stepOrder: 1, roleName: "manager", dueHours: 48, reminderHours: 12 }],
+  },
 ];
 
 const DEMO_ROLES = [

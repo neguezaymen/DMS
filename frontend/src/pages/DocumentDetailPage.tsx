@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Trans, useTranslation } from 'react-i18next'
-import { ArrowLeft, FileText } from 'lucide-react'
+import { ArrowLeft, Download, FileText, Mail, MoreHorizontal } from 'lucide-react'
 import api, {
   downloadBlobFromApi,
   parseAxiosBlobErrorMessage,
@@ -24,6 +24,13 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/shadcn/tabs'
 import { Badge } from '@/components/shadcn/badge'
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/shadcn/dropdown-menu'
+import {
   Table,
   TableBody,
   TableCell,
@@ -37,6 +44,7 @@ import { statusLabel, tagChipClass, workflowTimelineAction, mergeDocumentCategor
 import { resolveDocumentAccess } from '../utils/documentAccess'
 import DocumentSharesPanel from '../components/documents/DocumentSharesPanel'
 import DocumentPublicLinksPanel from '../components/documents/DocumentPublicLinksPanel'
+import DocumentAIAssistant from '../components/documents/DocumentAIAssistant'
 
 function isImageMime(mime?: string) {
   return mime?.startsWith('image/')
@@ -126,18 +134,6 @@ export default function DocumentDetailPage() {
   const [versionDownloadId, setVersionDownloadId] = useState<number | null>(null)
   const [cfFields, setCfFields] = useState<any[]>([])
   const [cfValues, setCfValues] = useState<Record<string, any>>({})
-  const [summaryOpen, setSummaryOpen] = useState(false)
-  const [summaryLoading, setSummaryLoading] = useState(false)
-  const [summaryText, setSummaryText] = useState('')
-  const [chatOpen, setChatOpen] = useState(false)
-  const [chatLoading, setChatLoading] = useState(false)
-  const [chatQuestion, setChatQuestion] = useState('')
-  const [chatMessages, setChatMessages] = useState<Array<{ role: string; text: string }>>([])
-  const [metaAiLoading, setMetaAiLoading] = useState(false)
-  const [metaAiOutput, setMetaAiOutput] = useState<any>(null)
-  const [versionCompareOpen, setVersionCompareOpen] = useState(false)
-  const [versionCompareLoading, setVersionCompareLoading] = useState(false)
-  const [versionCompareResult, setVersionCompareResult] = useState<any>(null)
   const [emailModalOpen, setEmailModalOpen] = useState(false)
   const [emailSending, setEmailSending] = useState(false)
   const [emailForm, setEmailForm] = useState({
@@ -300,9 +296,18 @@ export default function DocumentDetailPage() {
 
   useEffect(() => {
     const tab = searchParams.get('tab')
-    if (tab === 'workflow' || tab === 'versions' || tab === 'metadata' || tab === 'comments') {
+    if (
+      tab === 'workflow' ||
+      tab === 'versions' ||
+      tab === 'metadata' ||
+      tab === 'comments' ||
+      tab === 'assistant' ||
+      tab === 'sharing'
+    ) {
       setActiveTab(tab)
     }
+    const wf = searchParams.get('workflowId')
+    if (wf) setSelectedWorkflowId(wf)
   }, [searchParams])
 
   useEffect(() => {
@@ -562,78 +567,6 @@ export default function DocumentDetailPage() {
     }
   }
 
-  const summarizeDocument = async () => {
-    setSummaryOpen(true)
-    setSummaryLoading(true)
-    setSummaryText('')
-    try {
-      const res = await api.post(`/ai-studio/summarize/${id}`, {})
-      setSummaryText(res.data.data?.output || '')
-    } catch (error: any) {
-      setSummaryText('')
-      toast.error(error.response?.data?.message || t('documentDetail.summaryFail'))
-    } finally {
-      setSummaryLoading(false)
-    }
-  }
-
-  const askDocumentAI = async (event: React.FormEvent) => {
-    event.preventDefault()
-    const q = chatQuestion.trim()
-    if (!q) return
-    setChatLoading(true)
-    setChatMessages((prev) => [...prev, { role: 'user', text: q }])
-    setChatQuestion('')
-    try {
-      const res = await api.post(`/ai-studio/document-chat/${id}`, { question: q })
-      const answer = res.data.data?.answer || t('common.emDash')
-      setChatMessages((prev) => [...prev, { role: 'assistant', text: answer }])
-    } catch (error: any) {
-      const msg = error.response?.data?.message || t('documentDetail.chatAiFail')
-      setChatMessages((prev) => [
-        ...prev,
-        { role: 'assistant', text: t('documentDetail.chatErrorPrefix', { msg }) },
-      ])
-      toast.error(msg)
-    } finally {
-      setChatLoading(false)
-    }
-  }
-
-  const runMetadataExtraction = async (applyToCustomFields: boolean) => {
-    setMetaAiLoading(true)
-    try {
-      const res = await api.post(`/ai-studio/extract-metadata/${id}`, { applyToCustomFields })
-      setMetaAiOutput(res.data.data || null)
-      toast.success(
-        applyToCustomFields
-          ? t('documentDetail.metadataExtractedApplied')
-          : t('documentDetail.metadataExtracted'),
-      )
-      if (applyToCustomFields) {
-        await loadCustomFields()
-      }
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || t('documentDetail.metadataExtractFail'))
-    } finally {
-      setMetaAiLoading(false)
-    }
-  }
-
-  const runVersionCompare = async () => {
-    setVersionCompareOpen(true)
-    setVersionCompareLoading(true)
-    setVersionCompareResult(null)
-    try {
-      const res = await api.post(`/ai-studio/version-compare/${id}`, {})
-      setVersionCompareResult(res.data.data || null)
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || t('documentDetail.versionCompareFail'))
-    } finally {
-      setVersionCompareLoading(false)
-    }
-  }
-
   const sendByEmail = async (event: React.FormEvent) => {
     event.preventDefault()
     const recipients = emailForm.recipients
@@ -685,91 +618,164 @@ export default function DocumentDetailPage() {
   const canActOnCurrentWorkflow = Boolean(currentWorkflowInstance?.can_act)
   const canComment = Boolean(document.access?.permissions?.view !== false)
 
+  const openEmailModal = () => {
+    setEmailForm((prev) => ({
+      ...prev,
+      subject:
+        prev.subject || t('documentDetail.emailDefaultSubject', { title: document.title }),
+    }))
+    setEmailModalOpen(true)
+  }
+
   return (
     <div className="space-y-4">
-      <Card
-        title={document.title}
-        subtitle={t('documentDetail.subtitleStatus', { status: statusLabel(document.status, t) })}
-      >
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList>
-            <TabsTrigger value="metadata">{t('documentDetail.tabMetadata')}</TabsTrigger>
-            <TabsTrigger value="versions">{t('documentDetail.tabVersions')}</TabsTrigger>
-            <TabsTrigger value="workflow">{t('documentDetail.tabWorkflow')}</TabsTrigger>
-            <TabsTrigger value="comments">{t('documentDetail.tabComments')}</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="metadata" className="space-y-4 pt-4">
-            <div className="grid gap-3 text-sm sm:grid-cols-2">
-              <div className="flex items-center gap-2">
-                <span className="font-medium">{t('documentDetail.categoryLabel')}</span>
-                {!canManageV ? (
-                  <span>{document.category}</span>
-                ) : (
-                  <Select
-                    value={document.category || ''}
-                    onValueChange={changeDocumentCategory}
-                    disabled={categorySaving}
-                  >
-                    <SelectTrigger className="h-8 w-[220px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {categoryOptions.map((c) => (
-                        <SelectItem key={c} value={c}>
-                          {c}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-                {categorySaving ? (
-                  <span className="text-xs text-muted-foreground">{t('common.saving')}</span>
-                ) : null}
-              </div>
-              <p>
-                <span className="font-medium">{t('documentDetail.ownerLabel')}</span>{' '}
-                {document.owner_name}
-              </p>
-              <p>
-                <span className="font-medium">{t('documentDetail.mimeLabel')}</span>{' '}
-                {document.mime_type}
-              </p>
-              <p>
-                <span className="font-medium">{t('documentDetail.sizeLabel')}</span>{' '}
-                {t('documentDetail.byteCount', { n: document.size })}
-              </p>
-              <div className="sm:col-span-2">
-                <span className="font-medium">{t('documentDetail.tagsLabel')}</span>{' '}
-                {tags.length === 0 ? (
-                  <span>{t('common.emDash')}</span>
-                ) : (
-                  <span className="inline-flex flex-wrap gap-1 align-middle">
-                    {tags.map((tag: string, i: number) => (
-                      <span key={i} className={tagChipClass(tag)}>
-                        {tag}
-                      </span>
-                    ))}
-                  </span>
-                )}
-              </div>
-              <p className="sm:col-span-2">
-                <span className="font-medium">{t('documentDetail.descriptionLabel')}</span>{' '}
-                {document.description || t('common.emDash')}
-              </p>
-              {rights.role === 'share' ? (
-                <p className="text-xs text-muted-foreground sm:col-span-2">
-                  {t('documentDetail.shareLine', {
-                    permission: rights.permission || acc?.permission || 'view',
-                    download: canDownload ? t('common.yes') : t('common.no'),
-                    versions: canManageV ? t('common.yes') : t('common.no'),
-                  })}
-                </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <Button asChild variant="ghost" size="sm" className="-ml-2 mb-1 h-8 px-2">
+            <Link to="/documents">
+              <ArrowLeft className="mr-1.5 size-4" />
+              {t('documentDetail.backList')}
+            </Link>
+          </Button>
+          <h1 className="truncate text-xl font-semibold leading-tight">{document.title}</h1>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <Badge variant="outline">{statusLabel(document.status, t)}</Badge>
+            <span>{document.owner_name}</span>
+            <span aria-hidden>·</span>
+            <span>{document.category || t('common.emDash')}</span>
+            <span aria-hidden>·</span>
+            <span>{t('documentDetail.byteCount', { n: document.size })}</span>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {canDownload ? (
+            <Button type="button" size="sm" onClick={downloadCurrentDocument} disabled={docDownloadBusy}>
+              <Download className="mr-1.5 size-4" />
+              {docDownloadBusy ? t('common.loading') : t('common.download')}
+            </Button>
+          ) : null}
+          <Button type="button" size="sm" variant="outline" onClick={openEmailModal}>
+            <Mail className="mr-1.5 size-4" />
+            {t('documentDetail.sendEmail')}
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" size="sm" variant="outline">
+                <MoreHorizontal className="size-4" />
+                <span className="sr-only">{t('documentDetail.moreActions')}</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {canViewDoc && isOfficeOnlineMime(document.mime_type) ? (
+                <DropdownMenuItem onClick={openOfficePreview} disabled={officePreviewLoading}>
+                  <FileText className="mr-2 size-4" />
+                  {officePreviewLoading ? t('common.loading') : t('documentDetail.officePreviewBtn')}
+                </DropdownMenuItem>
               ) : null}
-            </div>
+              {isOwnerOrAdmin ? (
+                <DropdownMenuItem onClick={duplicateDocument}>
+                  {t('documentDetail.duplicate')}
+                </DropdownMenuItem>
+              ) : null}
+              {isAdmin ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={permanentDelete}
+                  >
+                    {t('documentDetail.permanentDelete')}
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+      <Card>
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="h-auto w-full flex-wrap justify-start gap-1">
+              <TabsTrigger value="metadata">{t('documentDetail.tabMetadata')}</TabsTrigger>
+              <TabsTrigger value="assistant">{t('documentDetail.tabAssistant')}</TabsTrigger>
+              <TabsTrigger value="versions">{t('documentDetail.tabVersions')}</TabsTrigger>
+              <TabsTrigger value="workflow">{t('documentDetail.tabWorkflow')}</TabsTrigger>
+              <TabsTrigger value="comments">{t('documentDetail.tabComments')}</TabsTrigger>
+              {canManageShares ? (
+                <TabsTrigger value="sharing">{t('documentDetail.tabSharing')}</TabsTrigger>
+              ) : null}
+            </TabsList>
+
+          <TabsContent value="metadata" className="space-y-4 pt-3">
+            <dl className="grid gap-x-4 gap-y-3 text-sm sm:grid-cols-2">
+              <div>
+                <dt className="text-xs text-muted-foreground">{t('documentDetail.categoryLabel')}</dt>
+                <dd className="mt-0.5">
+                  {!canManageV ? (
+                    document.category
+                  ) : (
+                    <Select
+                      value={document.category || ''}
+                      onValueChange={changeDocumentCategory}
+                      disabled={categorySaving}
+                    >
+                      <SelectTrigger className="h-8 w-full max-w-[220px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {categoryOptions.map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {c}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  {categorySaving ? (
+                    <span className="ml-2 text-xs text-muted-foreground">{t('common.saving')}</span>
+                  ) : null}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">{t('documentDetail.mimeLabel')}</dt>
+                <dd className="mt-0.5 truncate">{document.mime_type}</dd>
+              </div>
+              <div className="sm:col-span-2">
+                <dt className="text-xs text-muted-foreground">{t('documentDetail.tagsLabel')}</dt>
+                <dd className="mt-1">
+                  {tags.length === 0 ? (
+                    t('common.emDash')
+                  ) : (
+                    <span className="inline-flex flex-wrap gap-1">
+                      {tags.map((tag: string, i: number) => (
+                        <span key={i} className={tagChipClass(tag)}>
+                          {tag}
+                        </span>
+                      ))}
+                    </span>
+                  )}
+                </dd>
+              </div>
+              {document.description ? (
+                <div className="sm:col-span-2">
+                  <dt className="text-xs text-muted-foreground">{t('documentDetail.description')}</dt>
+                  <dd className="mt-0.5 whitespace-pre-wrap">{document.description}</dd>
+                </div>
+              ) : null}
+            </dl>
+
+            {rights.role === 'share' ? (
+              <p className="text-xs text-muted-foreground">
+                {t('documentDetail.shareLine', {
+                  permission: rights.permission || acc?.permission || 'view',
+                  download: canDownload ? t('common.yes') : t('common.no'),
+                  versions: canManageV ? t('common.yes') : t('common.no'),
+                })}
+              </p>
+            ) : null}
 
             {isPdfMime(document.mime_type) && canManageV ? (
-              <div className="rounded-md border p-3">
+              <div className="border-t pt-3">
                 {String(document.visibility || '').toLowerCase() === 'private' ? (
                   <p className="text-xs text-muted-foreground">
                     {t('documentDetail.watermarkPrivateAuto')}
@@ -792,10 +798,8 @@ export default function DocumentDetailPage() {
             ) : null}
 
             {cfFields.length > 0 ? (
-              <div className="space-y-3 rounded-md border p-3">
-                <h4 className="text-sm font-medium">
-                  {t('documentDetail.customFieldsHeading')}
-                </h4>
+              <div className="space-y-3 border-t pt-3">
+                <h4 className="text-sm font-medium">{t('documentDetail.customFieldsHeading')}</h4>
                 <div className="grid gap-3 sm:grid-cols-2">
                   {cfFields.map((field: any) => (
                     <div key={field.id} className="space-y-1.5">
@@ -864,108 +868,30 @@ export default function DocumentDetailPage() {
                   ))}
                 </div>
                 {canManageV ? (
-                  <Button type="button" variant="secondary" onClick={saveCustomFields}>
+                  <Button type="button" variant="secondary" size="sm" onClick={saveCustomFields}>
                     {t('documentDetail.saveCustomFieldsBtn')}
                   </Button>
                 ) : null}
               </div>
             ) : null}
-
-            <DocumentSharesPanel documentId={id} canManage={canManageShares} />
-            <DocumentPublicLinksPanel documentId={id} canManage={canManageShares} />
-
-            <div className="rounded-lg border bg-muted/30 p-4">
-              <h4 className="mb-3 text-sm font-medium">{t('documentDetail.actionsHeading')}</h4>
-              <div className="flex flex-wrap gap-2">
-                {canDownload ? (
-                  <Button
-                    type="button"
-                    onClick={downloadCurrentDocument}
-                    disabled={docDownloadBusy}
-                  >
-                    {docDownloadBusy ? t('common.loading') : t('common.download')}
-                  </Button>
-                ) : (
-                  <span className="text-xs text-muted-foreground">
-                    {t('documentDetail.downloadNotAllowed')}
-                  </span>
-                )}
-                {canViewDoc && isOfficeOnlineMime(document.mime_type) ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={openOfficePreview}
-                    disabled={officePreviewLoading}
-                  >
-                    <FileText className="mr-2 size-4" />
-                    {officePreviewLoading ? t('common.loading') : t('documentDetail.officePreviewBtn')}
-                  </Button>
-                ) : null}
-                {isOwnerOrAdmin ? (
-                  <Button type="button" variant="outline" onClick={duplicateDocument}>
-                    {t('documentDetail.duplicate')}
-                  </Button>
-                ) : null}
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => {
-                    setEmailForm((prev) => ({
-                      ...prev,
-                      subject:
-                        prev.subject ||
-                        t('documentDetail.emailDefaultSubject', { title: document.title }),
-                    }))
-                    setEmailModalOpen(true)
-                  }}
-                >
-                  {t('documentDetail.sendEmail')}
-                </Button>
-                <Button type="button" variant="secondary" onClick={summarizeDocument}>
-                  {t('documentDetail.summarizeAi')}
-                </Button>
-                <Button type="button" variant="secondary" onClick={() => setChatOpen(true)}>
-                  {t('documentDetail.chatWithAi')}
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => runMetadataExtraction(false)}
-                  disabled={metaAiLoading}
-                >
-                  {metaAiLoading ? t('documentDetail.extracting') : t('documentDetail.extractMetadataAi')}
-                </Button>
-                {canManageV ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => runMetadataExtraction(true)}
-                    disabled={metaAiLoading}
-                  >
-                    {metaAiLoading
-                      ? t('documentDetail.applying')
-                      : t('documentDetail.autofillCustomFields')}
-                  </Button>
-                ) : null}
-                <Button type="button" variant="outline" onClick={runVersionCompare}>
-                  {t('documentDetail.compareVersionsAi')}
-                </Button>
-                {isAdmin ? (
-                  <Button type="button" variant="destructive" onClick={permanentDelete}>
-                    {t('documentDetail.permanentDelete')}
-                  </Button>
-                ) : null}
-                <Button asChild variant="ghost">
-                  <Link to="/documents">
-                    <ArrowLeft className="mr-2 size-4" />
-                    {t('documentDetail.backToDocuments')}
-                  </Link>
-                </Button>
-              </div>
-            </div>
           </TabsContent>
 
-          <TabsContent value="versions" className="space-y-4 pt-4">
+          <TabsContent value="sharing" className="space-y-4 pt-3">
+            <DocumentSharesPanel documentId={id} canManage={canManageShares} />
+            <DocumentPublicLinksPanel documentId={id} canManage={canManageShares} />
+          </TabsContent>
+
+          <TabsContent value="assistant" className="space-y-4 pt-3">
+            <DocumentAIAssistant
+              documentId={String(id)}
+              canManageCustomFields={canManageV}
+              onCustomFieldsUpdated={() => {
+                void loadCustomFields()
+              }}
+            />
+          </TabsContent>
+
+          <TabsContent value="versions" className="space-y-4 pt-3">
             {canManageV ? (
               <form onSubmit={uploadVersion} className="space-y-3 rounded-md border p-3">
                 <div className="space-y-1.5">
@@ -1053,7 +979,7 @@ export default function DocumentDetailPage() {
             </div>
           </TabsContent>
 
-          <TabsContent value="comments" className="space-y-4 pt-4">
+          <TabsContent value="comments" className="space-y-4 pt-3">
             {canComment ? (
               <form onSubmit={postComment} className="space-y-2">
                 <Label htmlFor="new-comment">{t('documentDetail.newComment')}</Label>
@@ -1075,7 +1001,9 @@ export default function DocumentDetailPage() {
               </p>
             )}
 
-            <h4 className="text-sm font-medium">{t('documentDetail.commentsHistory')}</h4>
+            <h4 className="text-sm font-medium">
+              {t('documentDetail.commentsHistory')} ({comments.length})
+            </h4>
             {commentsLoading ? (
               <p className="text-sm text-muted-foreground">{t('documentDetail.loadingComments')}</p>
             ) : comments.length === 0 ? (
@@ -1115,11 +1043,12 @@ export default function DocumentDetailPage() {
             )}
           </TabsContent>
 
-          <TabsContent value="workflow" className="space-y-4 pt-4">
-            <Card
-              title={t('documentDetail.startWorkflowTitle')}
-              subtitle={t('documentDetail.startWorkflowSub')}
-            >
+          <TabsContent value="workflow" className="space-y-4 pt-3">
+            <div className="space-y-3 rounded-lg border p-3">
+              <div>
+                <h4 className="text-sm font-medium">{t('documentDetail.startWorkflowTitle')}</h4>
+                <p className="text-xs text-muted-foreground">{t('documentDetail.startWorkflowSub')}</p>
+              </div>
               {canManageV ? (
                 <div className="flex flex-wrap items-end gap-2">
                   <div className="space-y-1.5">
@@ -1149,12 +1078,13 @@ export default function DocumentDetailPage() {
                   {t('documentDetail.workflowManageRequired')}
                 </p>
               )}
-            </Card>
+            </div>
 
-            <Card
-              title={t('documentDetail.currentInstanceTitle')}
-              subtitle={t('documentDetail.currentInstanceSub')}
-            >
+            <div className="space-y-3 rounded-lg border p-3">
+              <div>
+                <h4 className="text-sm font-medium">{t('documentDetail.currentInstanceTitle')}</h4>
+                <p className="text-xs text-muted-foreground">{t('documentDetail.currentInstanceSub')}</p>
+              </div>
               {currentWorkflowInstance ? (
                 <div className="space-y-2 text-sm">
                   <p>
@@ -1217,13 +1147,14 @@ export default function DocumentDetailPage() {
                   {t('documentDetail.noWorkflowForDoc')}
                 </p>
               )}
-            </Card>
+            </div>
 
-            <Card
-              title={t('documentDetail.timelineTitle')}
-              subtitle={t('documentDetail.timelineSub')}
-            >
-              <div className="rounded-lg border">
+            <div className="space-y-3 rounded-lg border p-3">
+              <div>
+                <h4 className="text-sm font-medium">{t('documentDetail.timelineTitle')}</h4>
+                <p className="text-xs text-muted-foreground">{t('documentDetail.timelineSub')}</p>
+              </div>
+              <div className="overflow-x-auto rounded-md border">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -1258,7 +1189,7 @@ export default function DocumentDetailPage() {
                   </TableBody>
                 </Table>
               </div>
-            </Card>
+            </div>
           </TabsContent>
         </Tabs>
       </Card>
@@ -1271,7 +1202,7 @@ export default function DocumentDetailPage() {
           <img
             src={binaryPreviewUrl}
             alt={document.title}
-            className="max-w-full rounded-lg border"
+            className="max-h-[70vh] w-full rounded-md border object-contain"
           />
         ) : null}
         {isPdfMime(document.mime_type) && !binaryPreviewUrl ? (
@@ -1281,16 +1212,16 @@ export default function DocumentDetailPage() {
           <iframe
             src={binaryPreviewUrl}
             title={document.title}
-            className="h-[70vh] w-full rounded-lg border"
+            className="h-[70vh] w-full rounded-md border"
           />
         ) : null}
         {isTextMime(document.mime_type) ? (
-          <pre className="overflow-x-auto rounded-lg border bg-muted p-3 text-xs">
+          <pre className="max-h-[70vh] overflow-auto rounded-md border bg-muted p-3 text-xs">
             {textPreview}
           </pre>
         ) : null}
         {isOfficeOnlineMime(document.mime_type) ? (
-          <p className="text-xs text-muted-foreground">{t('documentDetail.officeHint')}</p>
+          <p className="text-sm text-muted-foreground">{t('documentDetail.officeHint')}</p>
         ) : null}
         {!isImageMime(document.mime_type) &&
         !isPdfMime(document.mime_type) &&
@@ -1299,132 +1230,6 @@ export default function DocumentDetailPage() {
           <p className="text-sm text-muted-foreground">{t('documentDetail.previewUnavailable')}</p>
         ) : null}
       </Card>
-
-      <Modal
-        open={summaryOpen}
-        title={t('documentDetail.summaryModalTitle')}
-        onClose={() => setSummaryOpen(false)}
-      >
-        {summaryLoading ? (
-          <p className="text-sm text-muted-foreground">
-            {t('documentDetail.summaryGenerating')}
-          </p>
-        ) : (
-          <pre className="whitespace-pre-wrap rounded-md border bg-muted p-3 text-sm">
-            {summaryText || t('common.emDash')}
-          </pre>
-        )}
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => navigator.clipboard.writeText(summaryText || '')}
-          >
-            {t('documentDetail.copy')}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              const w = window.open('', '_blank')
-              if (!w) return
-              w.document.write(
-                `<pre style="white-space:pre-wrap;font-family:Arial;padding:24px">${String(summaryText || '').replace(/</g, '&lt;')}</pre>`,
-              )
-              w.document.close()
-              w.focus()
-              w.print()
-            }}
-          >
-            {t('documentDetail.exportPdf')}
-          </Button>
-        </div>
-      </Modal>
-
-      <Modal
-        open={chatOpen}
-        title={t('documentDetail.chatModalTitle')}
-        onClose={() => setChatOpen(false)}
-      >
-        <div className="mb-3 flex max-h-[52vh] flex-col gap-2 overflow-y-auto">
-          {chatMessages.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {t('documentDetail.chatEmptyHint')}
-            </p>
-          ) : (
-            chatMessages.map((m, i) => (
-              <div
-                key={i}
-                className={
-                  m.role === 'user'
-                    ? 'ml-auto max-w-[85%] whitespace-pre-wrap rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground'
-                    : 'mr-auto max-w-[85%] whitespace-pre-wrap rounded-lg border bg-card px-3 py-2 text-sm'
-                }
-              >
-                {m.text}
-              </div>
-            ))
-          )}
-        </div>
-        <form onSubmit={askDocumentAI} className="flex gap-2">
-          <Input
-            value={chatQuestion}
-            onChange={(e) => setChatQuestion(e.target.value)}
-            placeholder={t('documentDetail.chatPlaceholder')}
-            className="flex-1"
-          />
-          <Button type="submit" disabled={chatLoading}>
-            {chatLoading ? t('documentDetail.sendingShort') : t('documentDetail.send')}
-          </Button>
-        </form>
-      </Modal>
-
-      <Modal
-        open={Boolean(metaAiOutput)}
-        title={t('documentDetail.metadataModalTitle')}
-        onClose={() => setMetaAiOutput(null)}
-      >
-        <pre className="whitespace-pre-wrap rounded-md border bg-muted p-3 text-xs">
-          {metaAiOutput ? JSON.stringify(metaAiOutput.metadata || {}, null, 2) : t('common.emDash')}
-        </pre>
-        {Array.isArray(metaAiOutput?.mapped) && metaAiOutput.mapped.length > 0 ? (
-          <p className="mt-2 text-xs text-muted-foreground">
-            {t('documentDetail.metadataFieldsUpdated', { count: metaAiOutput.mapped.length })}
-          </p>
-        ) : null}
-      </Modal>
-
-      <Modal
-        open={versionCompareOpen}
-        title={t('documentDetail.versionCompareTitle')}
-        onClose={() => setVersionCompareOpen(false)}
-      >
-        {versionCompareLoading ? (
-          <p className="text-sm text-muted-foreground">
-            {t('documentDetail.versionCompareLoading')}
-          </p>
-        ) : versionCompareResult ? (
-          <>
-            <pre className="whitespace-pre-wrap rounded-md border bg-muted p-3 text-sm">
-              {versionCompareResult.summary || t('common.emDash')}
-            </pre>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <Card title={t('documentDetail.linesAdded')}>
-                <pre className="max-h-[20vh] overflow-y-auto whitespace-pre-wrap text-xs">
-                  {(versionCompareResult.addedLines || []).join('\n') || t('common.emDash')}
-                </pre>
-              </Card>
-              <Card title={t('documentDetail.linesRemoved')}>
-                <pre className="max-h-[20vh] overflow-y-auto whitespace-pre-wrap text-xs">
-                  {(versionCompareResult.removedLines || []).join('\n') || t('common.emDash')}
-                </pre>
-              </Card>
-            </div>
-          </>
-        ) : (
-          <p className="text-sm text-muted-foreground">{t('documentDetail.noCompareResult')}</p>
-        )}
-      </Modal>
 
       <Modal
         open={officePreviewModalOpen}

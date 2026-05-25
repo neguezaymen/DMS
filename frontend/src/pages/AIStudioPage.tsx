@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Sparkles, FileDown, Layers } from 'lucide-react'
 import api from '../services/api/client'
 import Card from '../components/ui/Card'
+import AIGenerationPreview from '../components/ai/AIGenerationPreview'
 import { Button } from '@/components/shadcn/button'
 import { Label } from '@/components/shadcn/label'
 import { Textarea } from '@/components/shadcn/textarea'
@@ -16,14 +17,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/shadcn/select'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/shadcn/table'
 import { useToast } from '../state/ToastContext'
 
 const TEMPLATE_BY_KEY: Record<string, string> = {
@@ -47,10 +40,9 @@ function downloadAsPdfLike(title: string, content: string) {
 }
 
 export default function AIStudioPage() {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const toast = useToast()
   const [templates, setTemplates] = useState<any[]>([])
-  const [history, setHistory] = useState<any[]>([])
   const [quota, setQuota] = useState({ dailyLimit: 50, usedToday: 0 })
   const [loading, setLoading] = useState(false)
   const [output, setOutput] = useState('')
@@ -67,13 +59,11 @@ export default function AIStudioPage() {
 
   const load = async () => {
     try {
-      const [tpl, h, q] = await Promise.all([
+      const [tpl, q] = await Promise.all([
         api.get('/ai-studio/templates'),
-        api.get('/ai-studio/generations'),
         api.get('/ai-studio/quota'),
       ])
       setTemplates(tpl.data.data || [])
-      setHistory(h.data.data || [])
       setQuota(q.data.data || { dailyLimit: 50, usedToday: 0 })
     } catch (e: any) {
       toast.error(e.response?.data?.message || t('aiStudio.loadError'))
@@ -175,10 +165,8 @@ export default function AIStudioPage() {
     }
   }
 
-  const uiLocale = i18n.language?.startsWith('en') ? 'en-US' : 'fr-FR'
-
   return (
-    <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+    <div className="mx-auto max-w-3xl space-y-4">
       <Card
         title={t('aiStudio.title')}
         subtitle={t('aiStudio.subtitle')}
@@ -319,44 +307,8 @@ export default function AIStudioPage() {
         </form>
 
         <Card title={t('aiStudio.resultTitle')} subtitle={t('aiStudio.resultSub')}>
-          <pre className="whitespace-pre-wrap rounded-md border bg-muted p-3 text-sm">
-            {output || t('common.emDash')}
-          </pre>
+          <AIGenerationPreview content={output} emptyLabel={t('common.emDash')} />
         </Card>
-      </Card>
-
-      <Card title={t('aiStudio.history')} subtitle={t('aiStudio.historySub')}>
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('aiStudio.histColAction')}</TableHead>
-                <TableHead>{t('aiStudio.histColModel')}</TableHead>
-                <TableHead>{t('aiStudio.histColTokens')}</TableHead>
-                <TableHead>{t('aiStudio.histColDate')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {history.map((g: any) => (
-                <TableRow key={g.id}>
-                  <TableCell>{g.action}</TableCell>
-                  <TableCell>{g.model || t('common.emDash')}</TableCell>
-                  <TableCell>{g.tokens_used ?? 0}</TableCell>
-                  <TableCell className="text-xs">
-                    {new Date(g.created_at).toLocaleString(uiLocale)}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {history.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground">
-                    {t('common.noResults', '—')}
-                  </TableCell>
-                </TableRow>
-              ) : null}
-            </TableBody>
-          </Table>
-        </div>
       </Card>
     </div>
   )

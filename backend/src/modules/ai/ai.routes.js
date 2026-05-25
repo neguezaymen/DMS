@@ -22,6 +22,7 @@ const {
   getUsageAndQuota,
   getSchema,
   logSql,
+  resetUserAiState,
 } = require("./ai.service");
 const {
   parseCsvBuffer,
@@ -29,6 +30,22 @@ const {
   generateBatchZip,
   BATCH_TEMPLATES,
 } = require("./ai.batch.service");
+const { tokenize, detectDocType, jaccard } = require("./shared/documentNlp");
+const { buildAiResponse } = require("./ai.response");
+const { runAiTask } = require("./ai.orchestrator");
+const { suggestWorkflowFromText } = require("./capabilities/workflowSuggest");
+const { analyzeUploadFile } = require("./capabilities/uploadInsights");
+const { scanCorpusCompliance, analyzeDocumentCompliance } = require("./capabilities/complianceScan");
+const { buildDemoCorpusAnswer } = require("./capabilities/corpusQa");
+const {
+  extractMetadataFields,
+  enrichDocumentRecord,
+  batchEnrichDocuments,
+} = require("./capabilities/metadataEnrich");
+const {
+  listRoutingRecommendations,
+  suggestRoutingForDocument,
+} = require("./capabilities/workflowRouting");
 
 const router = express.Router();
 const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
@@ -51,38 +68,6 @@ router.use((req, res, next) => {
   };
   next();
 });
-
-function tokenize(text) {
-  return String(text || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9\u00c0-\u017f\s]/gi, " ")
-    .split(/\s+/)
-    .filter((w) => w.length >= 3);
-}
-
-function detectDocType(text) {
-  const t = String(text || "").toLowerCase();
-  if (/(facture|invoice|tva|montant|échéance|payer|payment)/i.test(t)) {
-    return { category: "Facture", tags: ["finance", "urgent"] };
-  }
-  if (/(contrat|contract|clause|signature|partie|obligation)/i.test(t)) {
-    return { category: "Contrat", tags: ["legal", "signature"] };
-  }
-  if (/(rapport|report|analyse|synthèse|résultat|conclusion)/i.test(t)) {
-    return { category: "Rapport", tags: ["analyse", "presentation"] };
-  }
-  return { category: "Général", tags: ["document"] };
-}
-
-function jaccard(aText, bText) {
-  const a = new Set(tokenize(aText));
-  const b = new Set(tokenize(bText));
-  if (a.size === 0 || b.size === 0) return 0;
-  let inter = 0;
-  for (const t of a) if (b.has(t)) inter += 1;
-  const union = a.size + b.size - inter;
-  return union > 0 ? inter / union : 0;
-}
 
 async function extractBufferText(file) {
   const mime = String(file.mimetype || "").toLowerCase();
@@ -116,33 +101,6 @@ async function extractFileText(filePath, mimeType, originalName) {
   } catch {
     return "";
   }
-}
-
-function extractMetadataFields(rawText) {
-  const text = String(rawText || "");
-  const joined = text.replace(/\s+/g, " ").trim();
-  const dateMatch =
-    joined.match(/\b(\d{4}-\d{2}-\d{2})\b/) ||
-    joined.match(/\b(\d{2}\/\d{2}\/\d{4})\b/) ||
-    joined.match(/\b(\d{2}-\d{2}-\d{4})\b/);
-  const amountMatch =
-    joined.match(/\b(?:montant|total|amount|ttc|ht)\s*[:=]?\s*([0-9]+(?:[.,][0-9]{2})?)\s*(?:dt|tnd|eur|usd|€|\$)?/i) ||
-    joined.match(/\b([0-9]+(?:[.,][0-9]{2})?)\s*(?:dt|tnd|eur|usd|€|\$)\b/i);
-  const clientMatch = joined.match(/\b(?:client|customer)\s*[:=]?\s*([A-Za-z0-9 ._\-]+)/i);
-  const supplierMatch = joined.match(/\b(?:fournisseur|supplier|vendor)\s*[:=]?\s*([A-Za-z0-9 ._\-]+)/i);
-  const docNoMatch = joined.match(/\b(?:n[°o]|num[eé]ro|number|ref|reference|invoice)\s*[:#=]?\s*([A-Za-z0-9\-_/]+)/i);
-  const dueDateMatch =
-    joined.match(/\b(?:echeance|échéance|due date|expire|expiration)\s*[:=]?\s*(\d{4}-\d{2}-\d{2}|\d{2}[\/-]\d{2}[\/-]\d{4})/i) ||
-    null;
-
-  return {
-    date: dateMatch ? dateMatch[1] : "",
-    montant: amountMatch ? amountMatch[1].replace(",", ".") : "",
-    client: clientMatch ? clientMatch[1].trim().slice(0, 120) : "",
-    fournisseur: supplierMatch ? supplierMatch[1].trim().slice(0, 120) : "",
-    numero_document: docNoMatch ? docNoMatch[1].trim().slice(0, 120) : "",
-    echeance: dueDateMatch ? dueDateMatch[1] : "",
-  };
 }
 
 router.get("/templates", async (req, res, next) => {
@@ -209,7 +167,50 @@ router.get("/generations", async (req, res, next) => {
 router.get("/quota", async (req, res, next) => {
   try {
     const q = await getUsageAndQuota(req.user.id);
-    return res.json({ success: true, data: q });
+    return res.json(buildAiResponse(q, { action: "quota" }));
+  } catch (e) {
+    return next(e);
+  }
+});
+
+router.post("/quota/reset", async (req, res, next) => {
+  try {
+    const quota = await resetUserAiState(req.user.id);
+    await logAudit({
+      actorId: req.user.id,
+      action: "ai.quota_reset",
+      entityType: "user",
+      entityId: String(req.user.id),
+      metadata: { usedToday: quota.usedToday },
+      ipAddress: req.ip,
+    });
+    return res.json(buildAiResponse(quota, { action: "quota_reset" }));
+  } catch (e) {
+    return next(e);
+  }
+});
+
+router.get("/hub", async (req, res, next) => {
+  try {
+    const quota = await getUsageAndQuota(req.user.id);
+    return res.json(
+      buildAiResponse(
+        {
+          quota,
+          features: [
+            { id: "generate", path: "/ai-studio", label: "Génération de contenu" },
+            { id: "batch", path: "/ai-studio/batch", label: "Génération batch CSV" },
+            { id: "search", path: "/documents", label: "Recherche intelligente" },
+            { id: "assistant", path: "/documents", label: "Assistant document (fiche)" },
+            { id: "compliance", path: "/ai/compliance", label: "Conformité & risques" },
+            { id: "corpus-qa", path: "/ai/corpus-qa", label: "Q&R sur le corpus" },
+            { id: "metadata", path: "/ai/metadata", label: "Extraction métadonnées" },
+            { id: "routing", path: "/ai/workflow-routing", label: "Routage workflow" },
+          ],
+        },
+        { action: "hub" }
+      )
+    );
   } catch (e) {
     return next(e);
   }
@@ -648,50 +649,49 @@ router.post("/deduplicate-upload-check", memUpload.single("file"), async (req, r
 
 router.post("/workflow-suggest-upload", memUpload.single("file"), async (req, res, next) => {
   try {
-    await assertQuota(req.user.id);
     const file = req.file;
     if (!file) return res.status(400).json({ success: false, message: "Fichier requis" });
-    const text = (await extractBufferText(file)).slice(0, 8000);
-    const det = detectDocType(`${file.originalname}\n${text}`);
-
-    const tpl = await query(
-      `SELECT id, name, document_category
-       FROM workflows
-       WHERE document_category IS NOT NULL
-         AND document_category <> ''
-       ORDER BY created_at DESC`
-    );
-    let best = null;
-    for (const t of tpl.rows) {
-      const c = String(t.document_category || "").toLowerCase();
-      if (c && det.category.toLowerCase().includes(c)) {
-        best = t;
-        break;
-      }
-      if (c && c.includes(det.category.toLowerCase())) {
-        best = t;
-        break;
-      }
-    }
-    if (!best && tpl.rows.length > 0) best = tpl.rows[0];
-
-    const rationale =
-      det.category === "Contrat"
-        ? "Le contenu contient des mots-clés contractuels (clause, signature, obligation)."
-        : det.category === "Facture"
-          ? "Le contenu contient des mots-clés financiers (facture, montant, paiement)."
-          : "Un workflow de validation générique est recommandé.";
-
-    return res.json({
-      success: true,
-      data: {
-        detectedCategory: det.category,
-        suggestedWorkflow: best
-          ? { id: best.id, name: best.name, documentCategory: best.document_category }
-          : null,
-        rationale,
+    const payload = await runAiTask(req.user.id, {
+      action: "workflow_suggest",
+      run: async () => {
+        const text = (await extractBufferText(file)).slice(0, 8000);
+        const data = await suggestWorkflowFromText(`${file.originalname}\n${text}`);
+        return { data, source: "heuristic", tokensUsed: 0 };
       },
     });
+    return res.json(payload);
+  } catch (e) {
+    return next(e);
+  }
+});
+
+router.post("/upload-insights", memUpload.single("file"), async (req, res, next) => {
+  try {
+    const file = req.file;
+    if (!file) return res.status(400).json({ success: false, message: "Fichier requis" });
+    const payload = await runAiTask(req.user.id, {
+      action: "upload_insights",
+      run: async () => {
+        const data = await analyzeUploadFile({
+          user: req.user,
+          file,
+          extractText: extractBufferText,
+        });
+        return { data, source: "heuristic", tokensUsed: 0 };
+      },
+    });
+    await logAudit({
+      actorId: req.user.id,
+      action: "ai.upload_insights",
+      entityType: "ai_generation",
+      entityId: String(file.originalname),
+      metadata: {
+        category: payload.data?.detectedCategory,
+        workflowId: payload.data?.suggestedWorkflow?.id || null,
+      },
+      ipAddress: req.ip,
+    });
+    return res.json(payload);
   } catch (e) {
     return next(e);
   }
@@ -895,64 +895,255 @@ router.get("/recommend-similar/:documentId", async (req, res, next) => {
 
 router.post("/multi-doc-qa", async (req, res, next) => {
   try {
-    await assertQuota(req.user.id);
-    const ids = Array.isArray(req.body?.documentIds)
-      ? req.body.documentIds.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n > 0)
-      : [];
-    const question = String(req.body?.question || "").trim();
-    if (!ids.length) return res.status(400).json({ success: false, message: "documentIds requis" });
-    if (!question) return res.status(400).json({ success: false, message: "Question requise" });
+    const payload = await runAiTask(req.user.id, {
+      action: "corpus_qa",
+      run: async () => {
+        const ids = Array.isArray(req.body?.documentIds)
+          ? req.body.documentIds.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n > 0)
+          : [];
+        const question = String(req.body?.question || "").trim();
+        if (!ids.length) {
+          const err = new Error("documentIds requis");
+          err.status = 400;
+          throw err;
+        }
+        if (!question) {
+          const err = new Error("Question requise");
+          err.status = 400;
+          throw err;
+        }
 
-    const unique = Array.from(new Set(ids)).slice(0, 12);
-    const accessible = [];
-    for (const id of unique) {
-      const ctx = await getDocumentWithAccess(req.user, id);
-      if (ctx.error) continue;
-      if (!assertMinAccess(ctx.access, "view")) continue;
-      accessible.push(ctx.docRow);
-    }
-    if (!accessible.length) {
-      return res.status(403).json({ success: false, message: "Aucun document accessible" });
-    }
+        const unique = Array.from(new Set(ids)).slice(0, 12);
+        const accessible = [];
+        for (const id of unique) {
+          const ctx = await getDocumentWithAccess(req.user, id);
+          if (ctx.error) continue;
+          if (!assertMinAccess(ctx.access, "view")) continue;
+          accessible.push(ctx.docRow);
+        }
+        if (!accessible.length) {
+          const err = new Error("Aucun document accessible");
+          err.status = 403;
+          throw err;
+        }
 
-    const contextBlock = accessible
-      .map((d) => {
-        const txt = String(d.extracted_text || d.description || "").slice(0, 3000);
-        return `#${d.id} ${d.title}\n${txt || "(vide)"}\n`;
-      })
-      .join("\n---\n");
+        const demo = buildDemoCorpusAnswer(question, accessible);
+        let answer = demo.answer;
+        let model = "demo-heuristic";
+        let tokensUsed = 0;
 
-    const out = await callOpenAI({
-      model: req.body?.model || DEFAULT_MODEL,
-      systemPrompt:
-        "Tu es un assistant documentaire multi-documents. Réponds en français, cite les IDs des documents utilisés, et indique quand une info est absente.",
-      userPrompt: `Question: ${question}\n\nCorpus:\n${contextBlock}`,
-    });
+        try {
+          const contextBlock = accessible
+            .map((d) => {
+              const txt = String(d.extracted_text || d.description || "").slice(0, 3000);
+              return `#${d.id} ${d.title}\n${txt || "(vide)"}\n`;
+            })
+            .join("\n---\n");
+          const out = await callOpenAI({
+            model: req.body?.model || DEFAULT_MODEL,
+            systemPrompt:
+              "Tu es un assistant documentaire multi-documents. Réponds en français, cite les IDs des documents utilisés, et indique quand une info est absente.",
+            userPrompt: `Question: ${question}\n\nCorpus:\n${contextBlock}`,
+          });
+          if (out.content && !String(out.model || "").includes("demo")) {
+            answer = out.content;
+            model = out.model;
+            tokensUsed = out.tokensUsed;
+          }
+        } catch {
+          /* keep demo answer */
+        }
 
-    const rec = await recordGeneration({
-      userId: req.user.id,
-      action: "multi_doc_qa",
-      inputText: JSON.stringify({ question, documentIds: unique }),
-      outputText: out.content,
-      model: out.model,
-      tokensUsed: out.tokensUsed,
+        await recordGeneration({
+          userId: req.user.id,
+          action: "multi_doc_qa",
+          inputText: JSON.stringify({ question, documentIds: unique }),
+          outputText: answer,
+          model,
+          tokensUsed,
+        });
+
+        return {
+          data: {
+            answer,
+            sources: demo.sources,
+            documentsUsed: accessible.map((d) => ({ id: d.id, title: d.title })),
+          },
+          model,
+          tokensUsed,
+          source: String(model).includes("demo") ? "demo" : "openai",
+        };
+      },
     });
     await logAudit({
       actorId: req.user.id,
       action: "ai.multi_doc_qa",
       entityType: "ai_generation",
-      entityId: String(rec.generationId),
-      metadata: { count: accessible.length, documentIds: unique },
+      entityId: String(req.user.id),
+      metadata: { documentIds: req.body?.documentIds },
       ipAddress: req.ip,
     });
-    return res.json({
-      success: true,
-      data: {
-        answer: out.content,
-        documentsUsed: accessible.map((d) => ({ id: d.id, title: d.title })),
-        generationId: rec.generationId,
+    return res.json(payload);
+  } catch (e) {
+    if (e.status === 400) return res.status(400).json({ success: false, message: e.message });
+    if (e.status === 403) return res.status(403).json({ success: false, message: e.message });
+    return next(e);
+  }
+});
+
+router.post("/corpus-qa", async (req, res, next) => {
+  try {
+    const payload = await runAiTask(req.user.id, {
+      action: "corpus_qa",
+      run: async () => {
+        const ids = Array.isArray(req.body?.documentIds)
+          ? req.body.documentIds.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n > 0)
+          : [];
+        const question = String(req.body?.question || "").trim();
+        if (!ids.length) {
+          const err = new Error("documentIds requis");
+          err.status = 400;
+          throw err;
+        }
+        if (!question) {
+          const err = new Error("Question requise");
+          err.status = 400;
+          throw err;
+        }
+        const unique = Array.from(new Set(ids)).slice(0, 12);
+        const accessible = [];
+        for (const id of unique) {
+          const ctx = await getDocumentWithAccess(req.user, id);
+          if (ctx.error) continue;
+          if (!assertMinAccess(ctx.access, "view")) continue;
+          accessible.push(ctx.docRow);
+        }
+        if (!accessible.length) {
+          const err = new Error("Aucun document accessible");
+          err.status = 403;
+          throw err;
+        }
+        const demo = buildDemoCorpusAnswer(question, accessible);
+        return {
+          data: {
+            answer: demo.answer,
+            sources: demo.sources,
+            documentsUsed: accessible.map((d) => ({ id: d.id, title: d.title })),
+          },
+          source: "demo",
+          tokensUsed: 0,
+        };
       },
     });
+    return res.json(payload);
+  } catch (e) {
+    if (e.status === 400) return res.status(400).json({ success: false, message: e.message });
+    if (e.status === 403) return res.status(403).json({ success: false, message: e.message });
+    return next(e);
+  }
+});
+
+router.get("/compliance/scan", async (req, res, next) => {
+  try {
+    const payload = await runAiTask(req.user.id, {
+      action: "compliance_scan",
+      run: async () => {
+        const data = await scanCorpusCompliance(req.user, {
+          limit: Math.min(60, Number(req.query.limit || 40)),
+        });
+        return { data, source: "heuristic", tokensUsed: 0 };
+      },
+    });
+    return res.json(payload);
+  } catch (e) {
+    return next(e);
+  }
+});
+
+router.get("/compliance/scan/:documentId", async (req, res, next) => {
+  try {
+    const documentId = Number(req.params.documentId);
+    const ctx = await getDocumentWithAccess(req.user, documentId);
+    if (ctx.error) return res.status(ctx.error.status).json(ctx.error.body);
+    if (!assertMinAccess(ctx.access, "view")) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
+    const payload = await runAiTask(req.user.id, {
+      action: "compliance_scan_doc",
+      run: async () => ({
+        data: analyzeDocumentCompliance(ctx.docRow),
+        source: "heuristic",
+        tokensUsed: 0,
+      }),
+    });
+    return res.json(payload);
+  } catch (e) {
+    return next(e);
+  }
+});
+
+router.post("/metadata/batch-enrich", async (req, res, next) => {
+  try {
+    const payload = await runAiTask(req.user.id, {
+      action: "metadata_batch_enrich",
+      run: async () => {
+        const data = await batchEnrichDocuments(req.user, {
+          documentIds: req.body?.documentIds,
+          applyToCustomFields: Boolean(req.body?.applyToCustomFields),
+          extractTextFn: extractFileText,
+          limit: Math.min(30, Number(req.body?.limit || 20)),
+        });
+        return { data, source: "heuristic", tokensUsed: data.processed };
+      },
+    });
+    await logAudit({
+      actorId: req.user.id,
+      action: "ai.metadata_batch_enrich",
+      entityType: "ai_generation",
+      entityId: String(req.user.id),
+      metadata: { processed: payload.data?.processed },
+      ipAddress: req.ip,
+    });
+    return res.json(payload);
+  } catch (e) {
+    return next(e);
+  }
+});
+
+router.get("/workflow-routing/recommendations", async (req, res, next) => {
+  try {
+    const payload = await runAiTask(req.user.id, {
+      action: "workflow_routing",
+      run: async () => {
+        const data = await listRoutingRecommendations(req.user, {
+          limit: Math.min(30, Number(req.query.limit || 20)),
+        });
+        return { data, source: "heuristic", tokensUsed: 0 };
+      },
+    });
+    return res.json(payload);
+  } catch (e) {
+    return next(e);
+  }
+});
+
+router.get("/workflow-routing/suggest/:documentId", async (req, res, next) => {
+  try {
+    const documentId = Number(req.params.documentId);
+    const ctx = await getDocumentWithAccess(req.user, documentId);
+    if (ctx.error) return res.status(ctx.error.status).json(ctx.error.body);
+    if (!assertMinAccess(ctx.access, "view")) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
+    const payload = await runAiTask(req.user.id, {
+      action: "workflow_routing_doc",
+      run: async () => ({
+        data: await suggestRoutingForDocument(ctx.docRow),
+        source: "heuristic",
+        tokensUsed: 0,
+      }),
+    });
+    return res.json(payload);
   } catch (e) {
     return next(e);
   }
@@ -965,50 +1156,21 @@ router.post("/extract-metadata/:documentId", async (req, res, next) => {
     const applyToCustomFields = Boolean(req.body?.applyToCustomFields);
     const ctx = await getDocumentWithAccess(req.user, documentId);
     if (ctx.error) return res.status(ctx.error.status).json(ctx.error.body);
-    if (!assertMinAccess(ctx.access, "view")) return res.status(403).json({ success: false, message: "Access denied" });
-
-    const content =
-      String(ctx.docRow.extracted_text || "").slice(0, 20000) ||
-      (await extractFileText(ctx.docRow.file_path, ctx.docRow.mime_type, ctx.docRow.original_name)).slice(0, 20000) ||
-      String(ctx.docRow.description || "");
-    const metadata = extractMetadataFields(`${ctx.docRow.title}\n${content}`);
-
-    const mapped = [];
-    if (applyToCustomFields && assertMinAccess(ctx.access, "manage")) {
-      const fields = await query(
-        `SELECT id, name, type
-         FROM custom_fields
-         WHERE is_active = 1
-           AND (document_type IS NULL OR document_type = '' OR document_type = ?)`,
-        [ctx.docRow.category || ""]
-      );
-      for (const f of fields.rows) {
-        const n = String(f.name || "").toLowerCase();
-        let val = null;
-        if (n.includes("date") && metadata.date) val = metadata.date;
-        else if ((n.includes("montant") || n.includes("amount") || n.includes("total")) && metadata.montant) val = metadata.montant;
-        else if (n.includes("client") && metadata.client) val = metadata.client;
-        else if ((n.includes("fournisseur") || n.includes("supplier") || n.includes("vendor")) && metadata.fournisseur) val = metadata.fournisseur;
-        else if ((n.includes("num") || n.includes("référence") || n.includes("reference")) && metadata.numero_document) val = metadata.numero_document;
-        else if ((n.includes("échéance") || n.includes("echeance") || n.includes("expiry")) && metadata.echeance) val = metadata.echeance;
-        if (val != null && String(val).trim() !== "") {
-          await query(
-            `INSERT INTO document_custom_values (document_id, field_id, value)
-             VALUES (?, ?, ?)
-             ON DUPLICATE KEY UPDATE value = VALUES(value)`,
-            [documentId, Number(f.id), String(val)]
-          );
-          mapped.push({ fieldId: f.id, fieldName: f.name, value: String(val) });
-        }
-      }
+    if (!assertMinAccess(ctx.access, "view")) {
+      return res.status(403).json({ success: false, message: "Access denied" });
     }
-
+    const canManage = assertMinAccess(ctx.access, "manage");
+    const enriched = await enrichDocumentRecord(ctx.docRow, {
+      applyToCustomFields: applyToCustomFields && canManage,
+      canManage,
+      extractTextFn: extractFileText,
+    });
     const rec = await recordGeneration({
       userId: req.user.id,
       documentId,
       action: "extract_metadata",
       inputText: String(documentId),
-      outputText: JSON.stringify({ metadata, mapped }),
+      outputText: JSON.stringify(enriched),
       model: "regex+heuristic",
       tokensUsed: 1,
     });
@@ -1017,10 +1179,19 @@ router.post("/extract-metadata/:documentId", async (req, res, next) => {
       action: "ai.extract_metadata",
       entityType: "document",
       entityId: String(documentId),
-      metadata: { mappedCount: mapped.length, generationId: rec.generationId },
+      metadata: { mappedCount: enriched.mapped.length, generationId: rec.generationId },
       ipAddress: req.ip,
     });
-    return res.json({ success: true, data: { metadata, mapped, generationId: rec.generationId } });
+    return res.json({
+      success: true,
+      data: {
+        metadata: enriched.metadata,
+        mapped: enriched.mapped,
+        suggestedCategory: enriched.suggestedCategory,
+        suggestedTags: enriched.suggestedTags,
+        generationId: rec.generationId,
+      },
+    });
   } catch (e) {
     return next(e);
   }

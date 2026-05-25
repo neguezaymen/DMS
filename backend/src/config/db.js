@@ -579,8 +579,8 @@ let pgVectorTypesRegistered = false;
 async function registerPgVectorTypes(client) {
   if (!pgvectorModule || pgVectorTypesRegistered) return;
   try {
-    await pgvectorModule.registerTypes(client);
-    pgVectorTypesRegistered = true;
+  await pgvectorModule.registerTypes(client);
+  pgVectorTypesRegistered = true;
   } catch (e) {
     // pgvector pas installé côté Neon : on logue mais on continue
     console.warn("[pgvector] registerTypes a échoué :", e?.message || e);

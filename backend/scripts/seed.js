@@ -74,8 +74,9 @@ async function seed() {
     }
 
     const { ensureDefaultWorkflows } = require("../src/modules/workflows/workflows.defaults.service");
-    const { ensureDemoDocuments } = require("../src/modules/documents/documents.demo.service");
+    const { ensureDemoDocuments, ensureDemoCustomFields } = require("../src/modules/documents/documents.demo.service");
     await ensureDefaultWorkflows();
+    await ensureDemoCustomFields();
     await ensureDemoDocuments();
 
     console.log("✅ Seed terminé — compte admin : admin@dms.local / Admin123!");
