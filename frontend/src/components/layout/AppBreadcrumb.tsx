@@ -1,4 +1,4 @@
-import { Link, useLocation, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Breadcrumb,
@@ -11,7 +11,7 @@ import {
 
 type Segment = { to: string; label: string; current?: boolean }
 
-function trailForPath(pathname: string, params: Record<string, string | undefined>, t: (k: string, vars?: any) => string): Segment[] {
+function trailForPath(pathname: string, params: Record<string, string | undefined>, t: (k: string, vars?: any) => string, settingsTab?: string | null): Segment[] {
   if (pathname === '/dashboard') return []
   const parts: Segment[] = []
 
@@ -61,6 +61,24 @@ function trailForPath(pathname: string, params: Record<string, string | undefine
     return parts
   }
 
+  if (pathname === '/admin/settings') {
+    parts.push({
+      to: '/admin/settings',
+      label: t('nav.settings'),
+      current: !settingsTab || settingsTab === 'general',
+    })
+    if (settingsTab === 'fields') {
+      parts.push({ to: '/admin/settings?tab=fields', label: t('adminSettings.tabFields'), current: true })
+    } else if (settingsTab === 'departments') {
+      parts.push({
+        to: '/admin/settings?tab=departments',
+        label: t('adminSettings.tabDepartments'),
+        current: true,
+      })
+    }
+    return parts
+  }
+
   const simple: Record<string, () => Segment[]> = {
     '/profile': () => [{ to: pathname, label: t('nav.profile'), current: true }],
     '/upload-requests': () => [{ to: pathname, label: t('nav.uploadRequests'), current: true }],
@@ -71,9 +89,6 @@ function trailForPath(pathname: string, params: Record<string, string | undefine
     '/workflows/tasks': () => [{ to: pathname, label: t('nav.myTasks'), current: true }],
     '/workflows/templates': () => [{ to: pathname, label: t('nav.templates'), current: true }],
     '/admin/users': () => [{ to: pathname, label: t('nav.users'), current: true }],
-    '/admin/departments': () => [{ to: pathname, label: t('nav.departments'), current: true }],
-    '/admin/settings': () => [{ to: pathname, label: t('nav.settings'), current: true }],
-    '/admin/custom-fields': () => [{ to: pathname, label: t('nav.customFields'), current: true }],
   }
 
   if (simple[pathname]) return simple[pathname]()
@@ -83,8 +98,9 @@ function trailForPath(pathname: string, params: Record<string, string | undefine
 export default function AppBreadcrumb() {
   const { t } = useTranslation()
   const { pathname } = useLocation()
+  const [searchParams] = useSearchParams()
   const params = useParams()
-  const trail = trailForPath(pathname, params, t)
+  const trail = trailForPath(pathname, params, t, searchParams.get('tab'))
 
   return (
     <Breadcrumb>

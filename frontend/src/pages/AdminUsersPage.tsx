@@ -5,9 +5,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Edit,
-  ExternalLink,
-  Trash2,
-  Unlock,
+  MoreHorizontal,
+  Plus,
 } from 'lucide-react'
 import api from '../services/api/client'
 import Card from '../components/ui/Card'
@@ -32,6 +31,13 @@ import {
   TableRow,
 } from '@/components/shadcn/table'
 import { Checkbox } from '@/components/shadcn/checkbox'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/shadcn/dropdown-menu'
 import { useToast } from '../state/ToastContext'
 import { useAuth } from '../state/AuthContext'
 
@@ -94,6 +100,7 @@ export default function AdminUsersPage() {
     department_ids: [] as number[],
     is_active: true,
   })
+  const [showCreate, setShowCreate] = useState(false)
 
   const loadUsers = async () => {
     setLoading(true)
@@ -177,6 +184,7 @@ export default function AdminUsersPage() {
         department_ids: form.department_ids,
       })
       toast.success(t('adminUsers.createSuccess'))
+      setShowCreate(false)
       setForm({
         full_name: '',
         email: '',
@@ -316,7 +324,19 @@ export default function AdminUsersPage() {
 
   return (
     <div className="space-y-4">
-      <Card title={t('adminUsers.title')} subtitle={t('adminUsers.subtitle')}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold">{t('adminUsers.title')}</h1>
+          <p className="text-sm text-muted-foreground">{t('adminUsers.subtitle')}</p>
+        </div>
+        <Button type="button" variant={showCreate ? 'secondary' : 'default'} onClick={() => setShowCreate((v) => !v)}>
+          <Plus className="mr-2 size-4" />
+          {showCreate ? t('common.cancel') : t('adminUsers.createBtn')}
+        </Button>
+      </div>
+
+      {showCreate ? (
+      <Card title={t('adminUsers.createCardTitle')} subtitle={t('adminUsers.createCardSub')}>
         <form onSubmit={createUser} className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="usr-name">{t('adminUsers.fullName')}</Label>
@@ -402,6 +422,7 @@ export default function AdminUsersPage() {
           </div>
         </form>
       </Card>
+      ) : null}
 
       <Card
         title={t('adminUsers.listTitle')}
@@ -438,20 +459,19 @@ export default function AdminUsersPage() {
                 <TableHead>{t('adminUsers.colDept')}</TableHead>
                 <TableHead>{t('adminUsers.colRole')}</TableHead>
                 <TableHead>{t('adminUsers.colStatus')}</TableHead>
-                <TableHead>{t('adminUsers.colLock')}</TableHead>
-                <TableHead>{t('adminUsers.colActions')}</TableHead>
+                <TableHead className="w-[120px]">{t('adminUsers.colActions')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground">
                     {t('common.loading')}
                   </TableCell>
                 </TableRow>
               ) : paginatedUsers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground">
                     {t('adminUsers.empty')}
                   </TableCell>
                 </TableRow>
@@ -472,23 +492,21 @@ export default function AdminUsersPage() {
                         <Badge variant="outline">{user.role}</Badge>
                       </TableCell>
                       <TableCell>
-                        {user.is_active ? (
-                          <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-900/40 dark:text-emerald-300">
-                            {t('common.active')}
-                          </Badge>
-                        ) : (
-                          <Badge variant="secondary">{t('common.inactive')}</Badge>
-                        )}
+                        <div className="flex flex-wrap items-center gap-1">
+                          {user.is_active ? (
+                            <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-900/40 dark:text-emerald-300">
+                              {t('common.active')}
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary">{t('common.inactive')}</Badge>
+                          )}
+                          {user.is_locked ? (
+                            <Badge variant="destructive">{t('adminUsers.lockLocked')}</Badge>
+                          ) : null}
+                        </div>
                       </TableCell>
                       <TableCell>
-                        {user.is_locked ? (
-                          <Badge variant="destructive">{t('adminUsers.lockLocked')}</Badge>
-                        ) : (
-                          <Badge variant="outline">{t('adminUsers.lockNormal')}</Badge>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
+                        <div className="flex items-center gap-1">
                           <Button
                             type="button"
                             variant="outline"
@@ -496,48 +514,40 @@ export default function AdminUsersPage() {
                             disabled={rowBusy}
                             onClick={() => openEditModal(user)}
                           >
-                            <Edit className="mr-1 size-3.5" />
-                            {t('adminUsers.edit')}
+                            <Edit className="size-3.5" />
                           </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={rowBusy}
-                            onClick={() => toggleUserStatus(user)}
-                          >
-                            {user.is_active
-                              ? t('adminUsers.deactivate')
-                              : t('adminUsers.activate')}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="destructive"
-                            size="sm"
-                            disabled={rowBusy || selfRow}
-                            onClick={() => deleteUser(user)}
-                          >
-                            <Trash2 className="mr-1 size-3.5" />
-                            {t('common.delete')}
-                          </Button>
-                          <Button asChild variant="ghost" size="sm">
-                            <Link to={`/documents?ownerId=${user.id}`}>
-                              <ExternalLink className="mr-1 size-3.5" />
-                              {t('adminUsers.viewDocs')}
-                            </Link>
-                          </Button>
-                          {user.is_locked ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={rowBusy}
-                              onClick={() => unlockUser(user.id)}
-                            >
-                              <Unlock className="mr-1 size-3.5" />
-                              {t('common.unlock')}
-                            </Button>
-                          ) : null}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button type="button" variant="ghost" size="sm" disabled={rowBusy}>
+                                <MoreHorizontal className="size-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => toggleUserStatus(user)}>
+                                {user.is_active
+                                  ? t('adminUsers.deactivate')
+                                  : t('adminUsers.activate')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem asChild>
+                                <Link to={`/documents?ownerId=${user.id}`}>
+                                  {t('adminUsers.viewDocs')}
+                                </Link>
+                              </DropdownMenuItem>
+                              {user.is_locked ? (
+                                <DropdownMenuItem onClick={() => unlockUser(user.id)}>
+                                  {t('common.unlock')}
+                                </DropdownMenuItem>
+                              ) : null}
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                disabled={selfRow}
+                                onClick={() => deleteUser(user)}
+                              >
+                                {t('common.delete')}
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </TableCell>
                     </TableRow>

@@ -60,7 +60,14 @@ function App() {
           />
           <Route path="/upload-requests" element={<UploadRequestsPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
-          <Route path="/audit-logs" element={<AuditLogsPage />} />
+          <Route
+            path="/audit-logs"
+            element={
+              <AdminRoute>
+                <AuditLogsPage />
+              </AdminRoute>
+            }
+          />
           <Route path="/trash" element={<TrashPage />} />
           <Route path="/ai" element={<AIHubPage />} />
           <Route path="/ai/compliance" element={<AICompliancePage />} />
