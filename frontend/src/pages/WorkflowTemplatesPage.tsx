@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Plus, Trash2 } from 'lucide-react'
 import api from '../services/api/client'
@@ -22,7 +21,20 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/shadcn/table'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/shadcn/dialog'
 import { useToast } from '../state/ToastContext'
+import {
+  DEFAULT_DOCUMENT_CATEGORY,
+  DOCUMENT_CATEGORY_PRESETS,
+  mergeDocumentCategories,
+} from '../utils/documentUi'
 
 function defaultStepsForRoles(roles: any[]) {
   const manager = roles.find((role: any) => String(role.name).toLowerCase() === 'manager')
@@ -82,10 +94,14 @@ export default function WorkflowTemplatesPage() {
   const [templates, setTemplates] = useState<any[]>([])
   const [roles, setRoles] = useState<any[]>([])
   const [users, setUsers] = useState<any[]>([])
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [categories, setCategories] = useState<string[]>(
+    mergeDocumentCategories([...DOCUMENT_CATEGORY_PRESETS]),
+  )
   const [form, setForm] = useState({
     name: '',
     description: '',
-    documentCategory: '',
+    documentCategory: DEFAULT_DOCUMENT_CATEGORY,
     steps: [
       { stepOrder: 1, assigneeType: 'role', assigneeId: '', dueHours: 24, reminderHours: 6 },
       { stepOrder: 2, assigneeType: 'role', assigneeId: '', dueHours: 24, reminderHours: 6 },
@@ -135,14 +151,44 @@ export default function WorkflowTemplatesPage() {
     }
   }
 
+  const loadCategories = async () => {
+    try {
+      const response = await api.get('/documents/categories')
+      const list = Array.isArray(response.data?.data) ? response.data.data : []
+      setCategories(mergeDocumentCategories([...DOCUMENT_CATEGORY_PRESETS, ...list]))
+    } catch {
+      setCategories(mergeDocumentCategories([...DOCUMENT_CATEGORY_PRESETS]))
+    }
+  }
+
   useEffect(() => {
     void loadTemplates()
+    void loadCategories()
     void (async () => {
       await loadRoles()
       await loadUsers()
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const resetCreateForm = () => {
+    setForm({
+      name: '',
+      description: '',
+      documentCategory: categories[0] || DEFAULT_DOCUMENT_CATEGORY,
+      steps: defaultStepsForRoles(roles),
+    })
+  }
+
+  const openCreateForm = () => {
+    resetCreateForm()
+    setCreateDialogOpen(true)
+  }
+
+  const closeCreateForm = () => {
+    setCreateDialogOpen(false)
+    resetCreateForm()
+  }
 
   const createTemplate = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -162,12 +208,7 @@ export default function WorkflowTemplatesPage() {
       }
       await api.post('/workflows/templates', { ...form, steps })
       toast.success(t('workflowTemplates.created'))
-      setForm({
-        name: '',
-        description: '',
-        documentCategory: '',
-        steps: defaultStepsForRoles(roles),
-      })
+      closeCreateForm()
       await loadTemplates()
     } catch (error: any) {
       toast.error(error.response?.data?.message || t('workflowTemplates.createFail'))
@@ -229,172 +270,12 @@ export default function WorkflowTemplatesPage() {
   return (
     <div className="space-y-4">
       <Card
-        title={t('workflowTemplates.cardCreateTitle')}
-        subtitle={t('workflowTemplates.cardCreateSub')}
-      >
-        <form onSubmit={createTemplate} className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="tpl-name">{t('common.name')}</Label>
-              <Input
-                id="tpl-name"
-                value={form.name}
-                onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="tpl-cat">{t('workflowTemplates.categoryLabel')}</Label>
-              <Input
-                id="tpl-cat"
-                value={form.documentCategory}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, documentCategory: event.target.value }))
-                }
-              />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="tpl-desc">{t('documentDetail.description')}</Label>
-              <Input
-                id="tpl-desc"
-                value={form.description}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, description: event.target.value }))
-                }
-              />
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            {form.steps.map((step, index) => (
-              <Card
-                key={`workflow-step-${index}`}
-                title={t('workflowTemplates.stepTitle', { n: index + 1 })}
-                subtitle={t('workflowTemplates.stepSub')}
-                actions={
-                  form.steps.length > 1 ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeStep(index)}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  ) : null
-                }
-              >
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor={`step-${index}-type`}>
-                      {t('workflowTemplates.assignTypeLabel')}
-                    </Label>
-                    <Select
-                      value={normalizeAssigneeType(step.assigneeType)}
-                      onValueChange={(v) => changeAssigneeType(index, v)}
-                    >
-                      <SelectTrigger id={`step-${index}-type`}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="role">
-                          {t('workflowTemplates.assigneeTypeRole')}
-                        </SelectItem>
-                        <SelectItem value="user">
-                          {t('workflowTemplates.assigneeTypeUser')}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor={`step-${index}-assignee`}>
-                      {t('workflowTemplates.assigneeLabel')}
-                    </Label>
-                    {stepAssignsRole(step) ? (
-                      <Select
-                        value={String(step.assigneeId ?? '')}
-                        onValueChange={(v) => updateStep(index, { assigneeId: v })}
-                      >
-                        <SelectTrigger id={`step-${index}-assignee`}>
-                          <SelectValue placeholder={t('workflowTemplates.chooseRole')} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {roles.map((role: any) => (
-                            <SelectItem key={String(role.id)} value={String(role.id)}>
-                              {role.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Select
-                        value={String(step.assigneeId ?? '')}
-                        onValueChange={(v) => updateStep(index, { assigneeId: v })}
-                      >
-                        <SelectTrigger id={`step-${index}-assignee`}>
-                          <SelectValue placeholder={t('workflowTemplates.chooseUser')} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {users.map((user: any) => (
-                            <SelectItem key={user.id} value={String(user.id)}>
-                              {user.full_name || user.email} ({user.email})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    )}
-                    {stepAssignsRole(step) && roles.length === 0 ? (
-                      <span className="text-xs text-muted-foreground">
-                        {t('workflowTemplates.rolesEmptyHint')}
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor={`step-${index}-due`}>
-                      {t('workflowTemplates.dueHours')}
-                    </Label>
-                    <Input
-                      id={`step-${index}-due`}
-                      type="number"
-                      min={0}
-                      value={step.dueHours}
-                      onChange={(event) => updateStep(index, { dueHours: event.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor={`step-${index}-reminder`}>
-                      {t('workflowTemplates.reminderHours')}
-                    </Label>
-                    <Input
-                      id={`step-${index}-reminder`}
-                      type="number"
-                      min={0}
-                      value={step.reminderHours}
-                      onChange={(event) =>
-                        updateStep(index, { reminderHours: event.target.value })
-                      }
-                    />
-                  </div>
-                </div>
-              </Card>
-            ))}
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" onClick={addStep}>
-              <Plus className="mr-2 size-4" />
-              {t('workflowTemplates.addStep')}
-            </Button>
-            <Button type="submit">{t('workflowTemplates.submitCreate')}</Button>
-          </div>
-        </form>
-      </Card>
-
-      <Card
         title={t('workflowTemplates.listTitle')}
         subtitle={t('workflowTemplates.listSub')}
         actions={
-          <Button asChild variant="secondary">
-            <Link to="/workflows/visual-editor">{t('workflowTemplates.openVisualEditor')}</Link>
+          <Button type="button" onClick={openCreateForm}>
+            <Plus className="mr-2 size-4" />
+            {t('workflowTemplates.addModel')}
           </Button>
         }
       >
@@ -437,6 +318,197 @@ export default function WorkflowTemplatesPage() {
           </Table>
         </div>
       </Card>
+
+      <Dialog
+        open={createDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) closeCreateForm()
+        }}
+      >
+        <DialogContent className="flex max-h-[90vh] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
+          <DialogHeader className="border-b px-6 py-4">
+            <DialogTitle>{t('workflowTemplates.cardCreateTitle')}</DialogTitle>
+            <DialogDescription>{t('workflowTemplates.cardCreateSub')}</DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={createTemplate} className="flex min-h-0 flex-1 flex-col">
+            <div className="space-y-4 overflow-y-auto px-6 py-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="tpl-name">{t('common.name')}</Label>
+                  <Input
+                    id="tpl-name"
+                    value={form.name}
+                    onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="tpl-cat">{t('workflowTemplates.categoryLabel')}</Label>
+                  <Select
+                    value={form.documentCategory || categories[0] || DEFAULT_DOCUMENT_CATEGORY}
+                    onValueChange={(v) => setForm((prev) => ({ ...prev, documentCategory: v }))}
+                  >
+                    <SelectTrigger id="tpl-cat" className="w-full">
+                      <SelectValue placeholder={t('common.category')} />
+                    </SelectTrigger>
+                    <SelectContent position="popper">
+                      {categories.map((cat) => (
+                        <SelectItem key={cat} value={cat}>
+                          {cat}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="tpl-desc">{t('documentDetail.description')}</Label>
+                  <Input
+                    id="tpl-desc"
+                    value={form.description}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, description: event.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {form.steps.map((step, index) => (
+                  <div
+                    key={`workflow-step-${index}`}
+                    className="space-y-3 rounded-lg border bg-muted/20 p-4"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium">
+                          {t('workflowTemplates.stepTitle', { n: index + 1 })}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {t('workflowTemplates.stepSub')}
+                        </p>
+                      </div>
+                      {form.steps.length > 1 ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeStep(index)}
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      ) : null}
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`step-${index}-type`}>
+                          {t('workflowTemplates.assignTypeLabel')}
+                        </Label>
+                        <Select
+                          value={normalizeAssigneeType(step.assigneeType)}
+                          onValueChange={(v) => changeAssigneeType(index, v)}
+                        >
+                          <SelectTrigger id={`step-${index}-type`}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="role">
+                              {t('workflowTemplates.assigneeTypeRole')}
+                            </SelectItem>
+                            <SelectItem value="user">
+                              {t('workflowTemplates.assigneeTypeUser')}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`step-${index}-assignee`}>
+                          {t('workflowTemplates.assigneeLabel')}
+                        </Label>
+                        {stepAssignsRole(step) ? (
+                          <Select
+                            value={String(step.assigneeId ?? '')}
+                            onValueChange={(v) => updateStep(index, { assigneeId: v })}
+                          >
+                            <SelectTrigger id={`step-${index}-assignee`}>
+                              <SelectValue placeholder={t('workflowTemplates.chooseRole')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {roles.map((role: any) => (
+                                <SelectItem key={String(role.id)} value={String(role.id)}>
+                                  {role.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Select
+                            value={String(step.assigneeId ?? '')}
+                            onValueChange={(v) => updateStep(index, { assigneeId: v })}
+                          >
+                            <SelectTrigger id={`step-${index}-assignee`}>
+                              <SelectValue placeholder={t('workflowTemplates.chooseUser')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {users.map((user: any) => (
+                                <SelectItem key={user.id} value={String(user.id)}>
+                                  {user.full_name || user.email} ({user.email})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                        {stepAssignsRole(step) && roles.length === 0 ? (
+                          <span className="text-xs text-muted-foreground">
+                            {t('workflowTemplates.rolesEmptyHint')}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`step-${index}-due`}>
+                          {t('workflowTemplates.dueHours')}
+                        </Label>
+                        <Input
+                          id={`step-${index}-due`}
+                          type="number"
+                          min={0}
+                          value={step.dueHours}
+                          onChange={(event) => updateStep(index, { dueHours: event.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`step-${index}-reminder`}>
+                          {t('workflowTemplates.reminderHours')}
+                        </Label>
+                        <Input
+                          id={`step-${index}-reminder`}
+                          type="number"
+                          min={0}
+                          value={step.reminderHours}
+                          onChange={(event) =>
+                            updateStep(index, { reminderHours: event.target.value })
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <Button type="button" variant="outline" onClick={addStep}>
+                <Plus className="mr-2 size-4" />
+                {t('workflowTemplates.addStep')}
+              </Button>
+            </div>
+
+            <DialogFooter className="border-t px-6 py-4 sm:justify-end">
+              <Button type="button" variant="outline" onClick={closeCreateForm}>
+                {t('common.cancel')}
+              </Button>
+              <Button type="submit">{t('workflowTemplates.submitCreate')}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -41,7 +41,6 @@ function trailForPath(pathname: string, params: Record<string, string | undefine
     '/search': () => [{ to: pathname, label: t('breadcrumb.search'), current: true }],
     '/workflows/tasks': () => [{ to: pathname, label: t('nav.myTasks'), current: true }],
     '/workflows/templates': () => [{ to: pathname, label: t('nav.templates'), current: true }],
-    '/workflows/visual-editor': () => [{ to: pathname, label: t('nav.visualWorkflow'), current: true }],
     '/admin/users': () => [{ to: pathname, label: t('nav.users'), current: true }],
     '/admin/departments': () => [{ to: pathname, label: t('nav.departments'), current: true }],
     '/admin/settings': () => [{ to: pathname, label: t('nav.settings'), current: true }],

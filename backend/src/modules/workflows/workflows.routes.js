@@ -8,8 +8,6 @@ const { ensureDefaultWorkflows } = require("./workflows.defaults.service");
 
 const router = express.Router();
 
-router.use(require("./workflows.visual.routes"));
-
 async function notifyStepAssignees({ stepId, documentId, title, message }) {
   if (!stepId) return;
   const step = await query(
@@ -163,9 +161,9 @@ router.get("/templates", authenticate, async (req, res, next) => {
     await ensureDefaultWorkflows();
     const templates = await query(
       `SELECT w.*,
-              (SELECT COUNT(*) FROM workflow_steps ws WHERE ws.workflow_id = w.id) AS steps_count,
-              COALESCE(w.is_visual, 0) AS is_visual
+              (SELECT COUNT(*) FROM workflow_steps ws WHERE ws.workflow_id = w.id) AS steps_count
        FROM workflows w
+       WHERE COALESCE(w.is_visual, 0) = 0
        ORDER BY w.created_at DESC, w.id DESC`
     );
     const seen = new Set();
@@ -411,7 +409,7 @@ router.get(
       );
       const instances = await query(
         `SELECT wi.id, wi.document_id, wi.workflow_id, wi.current_step_id, wi.current_node_id,
-                wi.status, wi.is_visual,
+                wi.status,
                 wi.started_at, wi.completed_at, wi.due_date,
                 w.name AS workflow_name,
                 ws.step_order, ws.assignee_type, ws.assignee_id,

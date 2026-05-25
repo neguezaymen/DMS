@@ -390,16 +390,7 @@ export default function DocumentDetailPage() {
       return
     }
     try {
-      const tpl = workflowTemplates.find((row) => String(row.id) === String(selectedWorkflowId))
-      const isVisual = tpl?.is_visual === 1 || tpl?.is_visual === true
-      if (isVisual) {
-        await api.post(`/workflows/visual/${selectedWorkflowId}/start`, {
-          documentId: Number(id),
-          context: { amount: Number(document?.size) || 0 },
-        })
-      } else {
-        await api.post(`/workflows/${selectedWorkflowId}/start`, { documentId: Number(id) })
-      }
+      await api.post(`/workflows/${selectedWorkflowId}/start`, { documentId: Number(id) })
       toast.success(t('documentDetail.workflowStarted'))
       await loadWorkflowData()
       await loadDocument()
@@ -422,11 +413,7 @@ export default function DocumentDetailPage() {
         '',
       ) || ''
     try {
-      if (instance.is_visual === 1 || instance.is_visual === true) {
-        await api.post(`/workflows/visual/instances/${instance.id}/action`, { action, comment })
-      } else {
-        await api.post(`/workflows/instances/${instance.id}/${action}`, { comment })
-      }
+      await api.post(`/workflows/instances/${instance.id}/${action}`, { comment })
       toast.success(t('documentDetail.actionRecorded'))
       await loadWorkflowData()
       await loadDocument()

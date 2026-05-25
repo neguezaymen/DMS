@@ -16,7 +16,6 @@ import {
   UserCircle,
   Users,
   ClipboardCheck,
-  Layers,
   Sparkles,
   LogOut,
   Settings,
@@ -94,7 +93,6 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { icon: ClipboardCheck, labelKey: 'nav.myTasks', to: '/workflows/tasks' },
       { icon: ClipboardList, labelKey: 'nav.templates', to: '/workflows/templates', adminOnly: true },
-      { icon: Layers, labelKey: 'nav.visualWorkflow', to: '/workflows/visual-editor', adminOnly: true },
     ],
   },
   {

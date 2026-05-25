@@ -30,6 +30,14 @@ import {
   SelectValue,
 } from '@/components/shadcn/select'
 import { Separator } from '@/components/shadcn/separator'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/shadcn/dialog'
 import DataTable, { type DataTableColumn } from '../components/ui/DataTable'
 import { useToast } from '../state/ToastContext'
 import { statusBadgeClass, statusLabel, tagChipClass, mergeDocumentCategories, DEFAULT_DOCUMENT_CATEGORY, DOCUMENT_CATEGORY_PRESETS } from '../utils/documentUi'
@@ -98,6 +106,8 @@ export default function DocumentsListPage() {
   const [smartQuery, setSmartQuery] = useState('')
   const [smartLoading, setSmartLoading] = useState(false)
   const [smartMode, setSmartMode] = useState('')
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
+  const [uploading, setUploading] = useState(false)
 
   const loadPending = async () => {
     if (!isAdmin) {
@@ -180,6 +190,7 @@ export default function DocumentsListPage() {
   }, [searchParams, isAdmin])
 
   useEffect(() => {
+    if (!uploadDialogOpen) return
     let cancelled = false
     const loadCustomFields = async () => {
       try {
@@ -193,7 +204,33 @@ export default function DocumentsListPage() {
     return () => {
       cancelled = true
     }
-  }, [meta.category])
+  }, [meta.category, uploadDialogOpen])
+
+  const resetUploadForm = () => {
+    setFiles([])
+    setDragging(false)
+    setMeta({
+      title: '',
+      category: categories[0] || DEFAULT_DOCUMENT_CATEGORY,
+      visibility: 'private',
+      tags: '',
+      description: '',
+    })
+    setCustomValues({})
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  const openUploadDialog = () => {
+    resetUploadForm()
+    setUploadDialogOpen(true)
+  }
+
+  const closeUploadDialog = () => {
+    setUploadDialogOpen(false)
+    resetUploadForm()
+  }
 
   const onUpload = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -215,6 +252,7 @@ export default function DocumentsListPage() {
       return
     }
     try {
+      setUploading(true)
       const formData = new FormData()
       selectedFiles.forEach((file) => formData.append('files', file))
       Object.entries(meta).forEach(([key, value]) => formData.append(key, value))
@@ -236,11 +274,7 @@ export default function DocumentsListPage() {
           ? t('documentsList.uploadPending')
           : t('documentsList.uploadOk'),
       )
-      setFiles([])
-      setCustomValues({})
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
+      closeUploadDialog()
       void loadDocuments()
     } catch (error: any) {
       const code = error.response?.data?.code
@@ -249,6 +283,8 @@ export default function DocumentsListPage() {
       } else {
         toast.error(error.response?.data?.message || t('documentsList.uploadFail'))
       }
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -505,176 +541,14 @@ export default function DocumentsListPage() {
       ) : null}
 
       <Card
-        title={t('documentsList.uploadTitle')}
-        subtitle={t('documentsList.uploadSub', { mb: Math.round(maxUploadBytes / 1048576) })}
-      >
-        <form onSubmit={onUpload} className="space-y-4">
-          <div
-            className={cn(
-              'flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-6 transition-colors',
-              dragging ? 'border-primary bg-primary/5' : 'border-border bg-muted/30',
-            )}
-            onDragOver={(event) => {
-              event.preventDefault()
-              setDragging(true)
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(event) => {
-              event.preventDefault()
-              setDragging(false)
-              setFiles(Array.from(event.dataTransfer.files || []))
-            }}
-          >
-            <UploadIcon className="size-7 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              {files.length > 0
-                ? t('documentsList.filesSelected', { n: files.length })
-                : t('documentsList.dropHere')}
-            </p>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              onChange={(event) => setFiles(Array.from(event.target.files || []))}
-              className="block w-full max-w-sm text-sm file:mr-2 file:rounded-md file:border file:border-input file:bg-background file:px-3 file:py-1 file:text-sm file:font-medium file:text-foreground hover:file:bg-accent"
-            />
-            {files.length > 0 ? (
-              <ul className="flex w-full flex-wrap gap-2">
-                {files.map((file, idx) => (
-                  <li
-                    key={`${file.name}-${idx}`}
-                    className="inline-flex items-center gap-1.5 rounded-full border bg-card px-3 py-1 text-xs"
-                  >
-                    <span className="max-w-[180px] truncate">{file.name}</span>
-                    <button
-                      type="button"
-                      className="text-muted-foreground hover:text-destructive"
-                      onClick={() => removeFileAt(idx)}
-                    >
-                      <X className="size-3" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="min-w-0 space-y-1.5">
-              <Label htmlFor="upload-title">{t('common.title')}</Label>
-              <Input
-                id="upload-title"
-                value={meta.title}
-                onChange={(event) => setMeta((prev) => ({ ...prev, title: event.target.value }))}
-                placeholder={t('documentsList.titlePlaceholder')}
-              />
-            </div>
-            <div className="min-w-0 space-y-1.5">
-              <Label htmlFor="upload-category">{t('common.category')}</Label>
-              <Select
-                value={meta.category || categories[0] || DEFAULT_DOCUMENT_CATEGORY}
-                onValueChange={(v) => setMeta((prev) => ({ ...prev, category: v }))}
-              >
-                <SelectTrigger id="upload-category">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {categories.map((cat) => (
-                    <SelectItem key={cat} value={cat}>
-                      {cat}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="min-w-0 space-y-1.5">
-              <Label htmlFor="upload-visibility">{t('common.visibility')}</Label>
-              <Select
-                value={meta.visibility}
-                onValueChange={(v) => setMeta((prev) => ({ ...prev, visibility: v }))}
-              >
-                <SelectTrigger id="upload-visibility">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="private">{t('documentsList.visibilityPrivate')}</SelectItem>
-                  <SelectItem value="public">{t('documentsList.visibilityPublic')}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="min-w-0 space-y-1.5">
-              <Label htmlFor="upload-tags">{t('common.tags')}</Label>
-              <Input
-                id="upload-tags"
-                value={meta.tags}
-                onChange={(event) => setMeta((prev) => ({ ...prev, tags: event.target.value }))}
-                placeholder={t('documentsList.tagsPlaceholder')}
-              />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="upload-description">{t('documentsList.description')}</Label>
-              <Textarea
-                id="upload-description"
-                rows={3}
-                value={meta.description}
-                onChange={(event) => setMeta((prev) => ({ ...prev, description: event.target.value }))}
-              />
-            </div>
-          </div>
-
-          {customFields.length > 0 ? (
-            <div className="space-y-2 rounded-md border p-3">
-              <p className="text-sm font-medium">{t('documentsList.customFieldsHeader')}</p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {customFields.map((field: any) => (
-                  <div key={field.id} className="min-w-0 space-y-1.5">
-                    <Label htmlFor={`cf-${field.id}`}>{field.name}</Label>
-                    {field.type === 'select' ? (
-                      <Select
-                        value={customValues[field.id] ?? ''}
-                        onValueChange={(v) =>
-                          setCustomValues((prev) => ({ ...prev, [field.id]: v }))
-                        }
-                      >
-                        <SelectTrigger id={`cf-${field.id}`}>
-                          <SelectValue placeholder="—" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {parseCustomFieldOptions(field.options).map((option: any) => (
-                            <SelectItem key={String(option)} value={String(option)}>
-                              {String(option)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Input
-                        id={`cf-${field.id}`}
-                        type={field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'}
-                        value={customValues[field.id] ?? ''}
-                        onChange={(event) =>
-                          setCustomValues((prev) => ({ ...prev, [field.id]: event.target.value }))
-                        }
-                      />
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="submit">
-              <UploadIcon className="mr-2 size-4" />
-              {t('documentsList.uploadBtn')}
-            </Button>
-          </div>
-        </form>
-      </Card>
-
-      <Card
         title={t('documentsList.listTitle')}
         subtitle={loading ? t('common.loading') : t('documentsList.listSub')}
+        actions={
+          <Button type="button" onClick={openUploadDialog}>
+            <UploadIcon className="mr-2 size-4" />
+            {t('documentsList.addDocument')}
+          </Button>
+        }
       >
         <div className="space-y-3">
           <div className="space-y-1.5">
@@ -809,6 +683,198 @@ export default function DocumentsListPage() {
           <DataTable columns={columns} rows={rows} loading={loading} pageSize={8} />
         </div>
       </Card>
+
+      <Dialog
+        open={uploadDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) closeUploadDialog()
+        }}
+      >
+        <DialogContent className="flex max-h-[90vh] max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+          <DialogHeader className="border-b px-6 py-4">
+            <DialogTitle>{t('documentsList.uploadTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('documentsList.uploadSub', { mb: Math.round(maxUploadBytes / 1048576) })}
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={onUpload} className="flex min-h-0 flex-1 flex-col">
+            <div className="space-y-4 overflow-y-auto px-6 py-4">
+              <div
+                className={cn(
+                  'flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-6 transition-colors',
+                  dragging ? 'border-primary bg-primary/5' : 'border-border bg-muted/30',
+                )}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  setDragging(true)
+                }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  setDragging(false)
+                  setFiles(Array.from(event.dataTransfer.files || []))
+                }}
+              >
+                <UploadIcon className="size-7 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">
+                  {files.length > 0
+                    ? t('documentsList.filesSelected', { n: files.length })
+                    : t('documentsList.dropHere')}
+                </p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={(event) => setFiles(Array.from(event.target.files || []))}
+                  className="block w-full max-w-sm text-sm file:mr-2 file:rounded-md file:border file:border-input file:bg-background file:px-3 file:py-1 file:text-sm file:font-medium file:text-foreground hover:file:bg-accent"
+                />
+                {files.length > 0 ? (
+                  <ul className="flex w-full flex-wrap gap-2">
+                    {files.map((file, idx) => (
+                      <li
+                        key={`${file.name}-${idx}`}
+                        className="inline-flex items-center gap-1.5 rounded-full border bg-card px-3 py-1 text-xs"
+                      >
+                        <span className="max-w-[180px] truncate">{file.name}</span>
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-destructive"
+                          onClick={() => removeFileAt(idx)}
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="min-w-0 space-y-1.5">
+                  <Label htmlFor="upload-title">{t('common.title')}</Label>
+                  <Input
+                    id="upload-title"
+                    value={meta.title}
+                    onChange={(event) => setMeta((prev) => ({ ...prev, title: event.target.value }))}
+                    placeholder={t('documentsList.titlePlaceholder')}
+                  />
+                </div>
+                <div className="min-w-0 space-y-1.5">
+                  <Label htmlFor="upload-category">{t('common.category')}</Label>
+                  <Select
+                    value={meta.category || categories[0] || DEFAULT_DOCUMENT_CATEGORY}
+                    onValueChange={(v) => setMeta((prev) => ({ ...prev, category: v }))}
+                  >
+                    <SelectTrigger id="upload-category" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent position="popper">
+                      {categories.map((cat) => (
+                        <SelectItem key={cat} value={cat}>
+                          {cat}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="min-w-0 space-y-1.5">
+                  <Label htmlFor="upload-visibility">{t('common.visibility')}</Label>
+                  <Select
+                    value={meta.visibility}
+                    onValueChange={(v) => setMeta((prev) => ({ ...prev, visibility: v }))}
+                  >
+                    <SelectTrigger id="upload-visibility" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent position="popper">
+                      <SelectItem value="private">{t('documentsList.visibilityPrivate')}</SelectItem>
+                      <SelectItem value="public">{t('documentsList.visibilityPublic')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="min-w-0 space-y-1.5">
+                  <Label htmlFor="upload-tags">{t('common.tags')}</Label>
+                  <Input
+                    id="upload-tags"
+                    value={meta.tags}
+                    onChange={(event) => setMeta((prev) => ({ ...prev, tags: event.target.value }))}
+                    placeholder={t('documentsList.tagsPlaceholder')}
+                  />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="upload-description">{t('documentDetail.description')}</Label>
+                  <Textarea
+                    id="upload-description"
+                    rows={3}
+                    value={meta.description}
+                    onChange={(event) =>
+                      setMeta((prev) => ({ ...prev, description: event.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+
+              {customFields.length > 0 ? (
+                <div className="space-y-2 rounded-md border p-3">
+                  <p className="text-sm font-medium">{t('documentsList.customFieldsHeader')}</p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {customFields.map((field: any) => (
+                      <div key={field.id} className="min-w-0 space-y-1.5">
+                        <Label htmlFor={`cf-${field.id}`}>{field.name}</Label>
+                        {field.type === 'select' ? (
+                          <Select
+                            value={customValues[field.id] ?? ''}
+                            onValueChange={(v) =>
+                              setCustomValues((prev) => ({ ...prev, [field.id]: v }))
+                            }
+                          >
+                            <SelectTrigger id={`cf-${field.id}`}>
+                              <SelectValue placeholder="—" />
+                            </SelectTrigger>
+                            <SelectContent position="popper">
+                              {parseCustomFieldOptions(field.options).map((option: any) => (
+                                <SelectItem key={String(option)} value={String(option)}>
+                                  {String(option)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input
+                            id={`cf-${field.id}`}
+                            type={
+                              field.type === 'date'
+                                ? 'date'
+                                : field.type === 'number'
+                                  ? 'number'
+                                  : 'text'
+                            }
+                            value={customValues[field.id] ?? ''}
+                            onChange={(event) =>
+                              setCustomValues((prev) => ({ ...prev, [field.id]: event.target.value }))
+                            }
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <DialogFooter className="border-t px-6 py-4 sm:justify-end">
+              <Button type="button" variant="outline" onClick={closeUploadDialog} disabled={uploading}>
+                {t('common.cancel')}
+              </Button>
+              <Button type="submit" disabled={uploading}>
+                <UploadIcon className="mr-2 size-4" />
+                {uploading ? t('common.uploading') : t('documentsList.uploadBtn')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

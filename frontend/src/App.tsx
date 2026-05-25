@@ -23,7 +23,6 @@ import UploadRequestsPage from './pages/UploadRequestsPage'
 import NotificationsPage from './pages/NotificationsPage'
 import AIStudioPage from './pages/AIStudioPage'
 import AIBatchPage from './pages/AIBatchPage'
-import VisualWorkflowEditorPage from './pages/VisualWorkflowEditorPage'
 import AuditLogsPage from './pages/AuditLogsPage'
 import TrashPage from './pages/TrashPage'
 import { ProtectedRoute } from './routes/ProtectedRoute'
@@ -60,14 +59,6 @@ function App() {
           <Route path="/trash" element={<TrashPage />} />
           <Route path="/ai-studio" element={<AIStudioPage />} />
           <Route path="/ai-studio/batch" element={<AIBatchPage />} />
-          <Route
-            path="/workflows/visual-editor"
-            element={
-              <AdminRoute>
-                <VisualWorkflowEditorPage />
-              </AdminRoute>
-            }
-          />
           <Route path="/documents" element={<DocumentsListPage />} />
           <Route path="/documents/:id" element={<DocumentDetailPage />} />
           <Route path="/search" element={<SearchResultsPage />} />

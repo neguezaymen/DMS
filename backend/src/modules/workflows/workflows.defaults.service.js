@@ -124,12 +124,18 @@ async function createWorkflowWithSteps(def) {
   return workflowId;
 }
 
+async function removeVisualWorkflows() {
+  await query(`DELETE FROM workflow_instances WHERE COALESCE(is_visual, 0) = 1`);
+  await query(`DELETE FROM workflows WHERE COALESCE(is_visual, 0) = 1`);
+}
+
 /**
  * Nettoie les doublons, retire les anciens « Validation contrat »,
- * puis assure les 4 modèles de démo.
+ * puis assure les modèles de démo linéaires.
  */
 async function ensureDefaultWorkflows() {
   await ensureDemoRoles();
+  await removeVisualWorkflows();
   await deduplicateWorkflowsByName();
   await removeLegacyValidationContrat();
   await deduplicateWorkflowsByName();
