@@ -8,6 +8,7 @@ import { Input } from '@/components/shadcn/input'
 import { Label } from '@/components/shadcn/label'
 import { Alert, AlertDescription } from '@/components/shadcn/alert'
 import { getApiOrigin } from '../utils/apiOrigin'
+import { usePageTitle } from '@/hooks/usePageTitle'
 
 export default function PublicLinkPage() {
   const { t } = useTranslation()
@@ -19,6 +20,7 @@ export default function PublicLinkPage() {
   const [accessToken, setAccessToken] = useState('')
   const [previewUrl, setPreviewUrl] = useState('')
   const [allowDownload, setAllowDownload] = useState(false)
+  usePageTitle(meta?.title || t('pageTitle.publicLink'))
 
   useEffect(() => {
     let cancelled = false

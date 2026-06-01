@@ -63,6 +63,8 @@ import {
   CommandSeparator,
 } from '@/components/shadcn/command'
 import AppBreadcrumb from '../components/layout/AppBreadcrumb'
+import AppLogo from '../components/layout/AppLogo'
+import PageHead from '../components/layout/PageHead'
 import LanguageSwitcher from '../components/layout/LanguageSwitcher'
 import { ThemeToggle } from '@/components/theme-toggle'
 
@@ -181,17 +183,10 @@ export default function MainLayout() {
 
   return (
     <SidebarProvider>
+      <PageHead />
       <Sidebar collapsible="icon" className="border-r">
         <SidebarHeader>
-          <Link to="/dashboard" className="flex items-center gap-2 px-2 py-1.5">
-            <div className="flex aspect-square size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <span className="text-sm font-bold">D</span>
-            </div>
-            <div className="flex flex-col gap-0.5 leading-none group-data-[collapsible=icon]:hidden">
-              <span className="text-sm font-semibold">DMS Workspace</span>
-              <span className="text-[11px] text-muted-foreground">{t('layout.brandSubtitle')}</span>
-            </div>
-          </Link>
+          <AppLogo to="/dashboard" size="sm" className="px-2 py-1.5" />
         </SidebarHeader>
         <SidebarContent>
           {sections.map((sec) => (

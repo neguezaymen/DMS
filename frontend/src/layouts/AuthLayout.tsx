@@ -1,6 +1,8 @@
-import { Outlet, Link } from 'react-router-dom'
+import { Outlet } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { ShieldCheck, Sparkles, Workflow, FileText } from 'lucide-react'
+import AppLogo from '../components/layout/AppLogo'
+import PageHead from '../components/layout/PageHead'
 import LanguageSwitcher from '../components/layout/LanguageSwitcher'
 import { ThemeToggle } from '@/components/theme-toggle'
 
@@ -10,6 +12,7 @@ export default function AuthLayout() {
 
   return (
     <div className="grid min-h-screen w-full lg:grid-cols-2">
+      <PageHead />
       {/* Colonne gauche — branding (cachée en mobile) */}
       <aside className="relative hidden overflow-hidden bg-slate-950 p-10 text-slate-50 lg:flex lg:flex-col lg:justify-between">
         {/* Mesh gradient */}
@@ -21,25 +24,17 @@ export default function AuthLayout() {
               'radial-gradient(900px 600px at 110% -10%, rgb(56, 78, 184, 0.55), transparent 60%), radial-gradient(700px 500px at -20% 110%, rgb(15, 118, 110, 0.45), transparent 60%), radial-gradient(500px 400px at 60% 50%, rgb(99, 102, 241, 0.35), transparent 60%)',
           }}
         />
-        <div className="relative z-10 flex items-center gap-2">
-          <Link to="/" className="flex items-center gap-2">
-            <div className="flex aspect-square size-9 items-center justify-center rounded-md bg-white/15 backdrop-blur">
-              <span className="text-base font-bold tracking-tight text-white">D</span>
-            </div>
-            <span className="text-base font-semibold">DMS Workspace</span>
-          </Link>
+        <div className="relative z-10">
+          <AppLogo to="/login" showSubtitle={false} inverted />
         </div>
 
         <div className="relative z-10 space-y-6">
           <div className="space-y-3">
             <h1 className="text-balance text-3xl font-semibold leading-tight tracking-tight md:text-4xl">
-              {t('auth.heroTitle', 'Centralisez vos documents, automatisez vos workflows')}
+              {t('auth.heroTitle')}
             </h1>
             <p className="max-w-md text-pretty text-sm text-slate-300">
-              {t(
-                'auth.heroSubtitle',
-                'La plateforme moderne pour gérer, signer et faire approuver vos documents en équipe.',
-              )}
+              {t('auth.heroSubtitle')}
             </p>
           </div>
 
@@ -48,31 +43,31 @@ export default function AuthLayout() {
               <span className="mt-0.5 grid size-6 place-items-center rounded-md bg-white/10 ring-1 ring-white/10">
                 <FileText className="size-3.5" />
               </span>
-              {t('auth.feature1', 'Stockage chiffré et recherche full-text')}
+              {t('auth.feature1')}
             </li>
             <li className="flex items-start gap-2.5">
               <span className="mt-0.5 grid size-6 place-items-center rounded-md bg-white/10 ring-1 ring-white/10">
                 <Workflow className="size-3.5" />
               </span>
-              {t('auth.feature2', 'Workflows configurables sans code')}
+              {t('auth.feature2')}
             </li>
             <li className="flex items-start gap-2.5">
               <span className="mt-0.5 grid size-6 place-items-center rounded-md bg-white/10 ring-1 ring-white/10">
                 <Sparkles className="size-3.5" />
               </span>
-              {t('auth.feature3', "Classification automatique par l'IA")}
+              {t('auth.feature3')}
             </li>
             <li className="flex items-start gap-2.5">
               <span className="mt-0.5 grid size-6 place-items-center rounded-md bg-white/10 ring-1 ring-white/10">
                 <ShieldCheck className="size-3.5" />
               </span>
-              {t('auth.feature4', 'Audit complet et conformité RGPD')}
+              {t('auth.feature4')}
             </li>
           </ul>
         </div>
 
         <div className="relative z-10 text-xs text-slate-400">
-          © {year} DMS Workspace · {t('auth.tagline', 'Built for modern teams')}
+          {t('auth.footerCopyright', { year })} · {t('auth.tagline')}
         </div>
       </aside>
 
@@ -84,11 +79,8 @@ export default function AuthLayout() {
         </div>
 
         {/* Brand mobile */}
-        <div className="flex items-center gap-2 px-6 pb-2 pt-6 lg:hidden">
-          <div className="flex aspect-square size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <span className="text-sm font-bold">D</span>
-          </div>
-          <span className="text-sm font-semibold">DMS Workspace</span>
+        <div className="px-6 pb-2 pt-6 lg:hidden">
+          <AppLogo to="/login" showSubtitle={false} size="sm" />
         </div>
 
         <div className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6 md:px-10">
@@ -98,7 +90,7 @@ export default function AuthLayout() {
         </div>
 
         <footer className="px-6 pb-4 text-center text-xs text-muted-foreground lg:hidden">
-          © {year} DMS Workspace
+          {t('auth.footerCopyright', { year })}
         </footer>
       </main>
     </div>

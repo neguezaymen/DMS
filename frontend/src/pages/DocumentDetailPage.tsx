@@ -45,6 +45,7 @@ import { resolveDocumentAccess } from '../utils/documentAccess'
 import DocumentSharesPanel from '../components/documents/DocumentSharesPanel'
 import DocumentPublicLinksPanel from '../components/documents/DocumentPublicLinksPanel'
 import DocumentAIAssistant from '../components/documents/DocumentAIAssistant'
+import { usePageTitle } from '@/hooks/usePageTitle'
 
 function isImageMime(mime?: string) {
   return mime?.startsWith('image/')
@@ -111,6 +112,7 @@ export default function DocumentDetailPage() {
   const { t, i18n } = useTranslation()
   const uiLocale = i18n.language?.startsWith('en') ? 'en-US' : 'fr-FR'
   const [document, setDocument] = useState<any>(null)
+  usePageTitle(document?.title || t('pageTitle.documentDetail'))
   const [textPreview, setTextPreview] = useState('')
   const [binaryPreviewUrl, setBinaryPreviewUrl] = useState('')
   const [activeTab, setActiveTab] = useState('metadata')

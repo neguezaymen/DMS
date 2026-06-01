@@ -9,6 +9,7 @@ import { Label } from '@/components/shadcn/label'
 import { Textarea } from '@/components/shadcn/textarea'
 import { Alert, AlertDescription } from '@/components/shadcn/alert'
 import { getApiOrigin } from '../utils/apiOrigin'
+import { usePageTitle } from '@/hooks/usePageTitle'
 
 const API = `${getApiOrigin()}/api/v1`
 
@@ -28,6 +29,7 @@ export default function RequestUploadPage() {
   const [files, setFiles] = useState<FileList | null>(null)
   const [done, setDone] = useState(false)
   const [uploading, setUploading] = useState(false)
+  usePageTitle(t('pageTitle.requestUpload'))
 
   const tEnc = encodeURIComponent(token || '')
 

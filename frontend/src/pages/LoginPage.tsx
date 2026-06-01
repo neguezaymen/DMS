@@ -68,7 +68,7 @@ export default function LoginPage() {
       <div className="space-y-1.5">
         <h1 className="text-2xl font-semibold tracking-tight">{t('auth.loginTitle')}</h1>
         <p className="text-sm text-muted-foreground">
-          {t('auth.loginSubtitle', 'Connectez-vous pour accéder à votre espace de travail.')}
+          {t('auth.loginSubtitle')}
         </p>
       </div>
 
@@ -82,7 +82,7 @@ export default function LoginPage() {
               name="email"
               type="email"
               autoComplete="email"
-              placeholder="admin@dms.local"
+              placeholder={t('auth.emailPlaceholder')}
               value={form.email}
               onChange={onChange}
               aria-invalid={Boolean(errors.email)}
@@ -106,7 +106,7 @@ export default function LoginPage() {
               name="password"
               type="password"
               autoComplete="current-password"
-              placeholder="••••••••"
+              placeholder={t('auth.passwordPlaceholder')}
               value={form.password}
               onChange={onChange}
               aria-invalid={Boolean(errors.password)}
@@ -129,7 +129,7 @@ export default function LoginPage() {
       </form>
 
       <p className="text-center text-sm text-muted-foreground">
-        {t('auth.noAccount', "Pas encore de compte ?")}{' '}
+        {t('auth.noAccount')}{' '}
         <Link to="/register" className="font-medium text-foreground underline-offset-4 hover:underline">
           {t('auth.registerLink')}
         </Link>

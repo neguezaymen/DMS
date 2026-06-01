@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" role="img" aria-label="DMS Workspace">
+  <rect width="48" height="48" rx="10" fill="#0f172a"/>
+  <path fill="#f8fafc" d="M14 12h14l6 6v22H14V12z"/>
+  <path fill="#64748b" d="M28 12v6h6"/>
+  <path stroke="#3b82f6" stroke-width="2" stroke-linecap="round" d="M18 26h16M18 31h11"/>
+  <circle cx="36" cy="36" r="8" fill="#2563eb"/>
+  <path stroke="#fff" stroke-width="2" stroke-linecap="round" d="M33 36l2 2 4-4"/>
+</svg>
