@@ -312,6 +312,29 @@ router.post("/:id/start", authenticate, async (req, res, next) => {
       return res.status(400).json({ success: false, message: "Workflow has no steps" });
     }
 
+    const workflowId = Number(req.params.id);
+    const pendingOnDoc = await query(
+      `SELECT wi.id, wi.workflow_id, w.name AS workflow_name
+       FROM workflow_instances wi
+       JOIN workflows w ON w.id = wi.workflow_id
+       WHERE wi.document_id = ? AND wi.status = 'pending'
+       LIMIT 1`,
+      [documentId]
+    );
+    if (pendingOnDoc.rowCount > 0) {
+      const active = pendingOnDoc.rows[0];
+      if (Number(active.workflow_id) === workflowId) {
+        return res.status(409).json({
+          success: false,
+          message: "Ce modèle de workflow est déjà en cours sur ce document.",
+        });
+      }
+      return res.status(409).json({
+        success: false,
+        message: `Un workflow est déjà en cours sur ce document (« ${active.workflow_name} »). Terminez-le avant d'en démarrer un autre.`,
+      });
+    }
+
     const firstDueHours = dueDateExpr(firstStep.rows[0].due_hours);
     const insert = firstDueHours
       ? await query(

@@ -220,7 +220,8 @@ export default function DocumentDetailPage() {
         api.get(`/workflows/instances/by-document/${id}`),
         api.get('/workflows/templates'),
       ])
-      setWorkflowData(timelineResponse.data.data || { instances: [], timeline: [] })
+      const data = timelineResponse.data.data || { instances: [], timeline: [] }
+      setWorkflowData(data)
       const seen = new Set<string>()
       const templates = (templatesResponse.data.data || []).filter((tpl: any) => {
         const key = String(tpl.name || '').trim().toLowerCase()
@@ -229,8 +230,19 @@ export default function DocumentDetailPage() {
         return true
       })
       setWorkflowTemplates(templates)
-      if (!selectedWorkflowId && templates.length > 0) {
-        setSelectedWorkflowId(String(templates[0].id))
+      const hasPending = (data.instances || []).some((inst: any) => inst.status === 'pending')
+      const startable = hasPending
+        ? []
+        : templates.filter(
+            (tpl: any) =>
+              !(data.instances || []).some(
+                (inst: any) =>
+                  String(inst.workflow_id) === String(tpl.id) && inst.status === 'pending',
+              ),
+          )
+      if (startable.length > 0) {
+        const stillValid = startable.some((tpl: any) => String(tpl.id) === selectedWorkflowId)
+        if (!stillValid) setSelectedWorkflowId(String(startable[0].id))
       }
     } catch (error: any) {
       toast.error(error.response?.data?.message || t('documentDetail.loadWorkflowFail'))
@@ -613,11 +625,19 @@ export default function DocumentDetailPage() {
   const canManageV = rights.canManage
   const isOwnerOrAdmin = rights.role === 'owner'
   const canManageShares = isAdmin || isOwner
-  const currentWorkflowInstance =
-    (workflowData.instances || []).find((instance: any) => instance.status === 'pending') ||
-    workflowData.instances?.[0] ||
-    null
-  const canActOnCurrentWorkflow = Boolean(currentWorkflowInstance?.can_act)
+  const pendingWorkflowInstance =
+    (workflowData.instances || []).find((instance: any) => instance.status === 'pending') || null
+  const currentWorkflowInstance = pendingWorkflowInstance || workflowData.instances?.[0] || null
+  const canActOnCurrentWorkflow = Boolean(pendingWorkflowInstance?.can_act)
+  const canStartWorkflow = canManageV && !pendingWorkflowInstance
+  const startableWorkflowTemplates = (workflowTemplates || []).filter((template: any) => {
+    if (pendingWorkflowInstance) return false
+    const hasPendingSame = (workflowData.instances || []).some(
+      (inst: any) =>
+        String(inst.workflow_id) === String(template.id) && inst.status === 'pending',
+    )
+    return !hasPendingSame
+  })
   const canComment = Boolean(document.access?.permissions?.view !== false)
 
   const openEmailModal = () => {
@@ -1052,29 +1072,45 @@ export default function DocumentDetailPage() {
                 <p className="text-xs text-muted-foreground">{t('documentDetail.startWorkflowSub')}</p>
               </div>
               {canManageV ? (
-                <div className="flex flex-wrap items-end gap-2">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="workflow-template">
-                      {t('documentDetail.templateLabel')}
-                    </Label>
-                    <Select
-                      value={selectedWorkflowId}
-                      onValueChange={(v) => setSelectedWorkflowId(v)}
-                    >
-                      <SelectTrigger id="workflow-template" className="w-[260px]">
-                        <SelectValue placeholder={t('documentDetail.chooseTemplate')} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {workflowTemplates.map((template: any) => (
-                          <SelectItem key={template.id} value={String(template.id)}>
-                            {template.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                pendingWorkflowInstance ? (
+                  <p className="text-sm text-muted-foreground">
+                    {t('documentDetail.workflowAnotherPending', {
+                      name:
+                        pendingWorkflowInstance.workflow_name ||
+                        t('documentDetail.workflowNameLabel'),
+                    })}
+                  </p>
+                ) : startableWorkflowTemplates.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    {t('documentDetail.workflowStartBlocked')}
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="workflow-template">
+                        {t('documentDetail.templateLabel')}
+                      </Label>
+                      <Select
+                        value={selectedWorkflowId}
+                        onValueChange={(v) => setSelectedWorkflowId(v)}
+                      >
+                        <SelectTrigger id="workflow-template" className="w-[260px]">
+                          <SelectValue placeholder={t('documentDetail.chooseTemplate')} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {startableWorkflowTemplates.map((template: any) => (
+                            <SelectItem key={template.id} value={String(template.id)}>
+                              {template.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button onClick={startWorkflow} disabled={!canStartWorkflow}>
+                      {t('documentDetail.startWorkflowBtn')}
+                    </Button>
                   </div>
-                  <Button onClick={startWorkflow}>{t('documentDetail.startWorkflowBtn')}</Button>
-                </div>
+                )
               ) : (
                 <p className="text-sm text-muted-foreground">
                   {t('documentDetail.workflowManageRequired')}
