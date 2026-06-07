@@ -1,6 +1,6 @@
 const express = require("express");
 const multer = require("multer");
-const pdfParse = require("pdf-parse");
+const { extractPdfText } = require("../documents/pdf-text-extractor");
 const mammoth = require("mammoth");
 const fs = require("fs/promises");
 const { query } = require("../../config/db");
@@ -120,8 +120,12 @@ async function extractBufferText(file) {
   const mime = String(file.mimetype || "").toLowerCase();
   const name = String(file.originalname || "").toLowerCase();
   if (mime.includes("pdf") || name.endsWith(".pdf")) {
-    const parsed = await pdfParse(file.buffer);
-    return parsed.text || "";
+    try {
+      const { text } = await extractPdfText(file.buffer);
+      return text || "";
+    } catch {
+      return "";
+    }
   }
   if (
     mime.includes("wordprocessingml") ||

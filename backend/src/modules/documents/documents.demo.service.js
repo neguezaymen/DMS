@@ -92,29 +92,6 @@ const DEMO_DOCUMENTS = [
   },
 ];
 
-/** Texte indexable de secours si l'extraction PDF échoue (tests IA). */
-const DEMO_AI_TEXT = {
-  "Rapport_Stage_Sahar_Neguez.pdf": `Rapport de stage PFE — Sahar Neguez. Stack React, Node.js, PostgreSQL, workflows, hub IA.
-Conformité RGPD : archivage contrats 5 ans, factures 10 ans. Client: WebSolutions SARL. Poste: Stage développement full-stack. Date: 15/06/2026.`,
-  "Contrat_Alternance_2025.docx": `Contrat d'alternance 2025-2026. WebSolutions SARL et Aymen Neguez. Du 01/09/2025 au 31/08/2026.
-Missions DMS et modules IA. Client: WebSolutions SARL. Fournisseur: ISAMM. Date: 28/08/2025. Signature employeur et alternant.`,
-  "Contrat_Prestation_Risque.pdf": `Contrat prestation IT. Client: WebSolutions SARL. Fournisseur: TechPartner SARL. Date: 01/03/2026.
-Clause pénalité 2% par semaine. Résiliation unilatérale. Non-concurrence 24 mois. Confidentialité perpétuelle.
-Montant TTC: 45000.00 TND. N° document: CTR-2026-0091. Échéance: 01/03/2026. Document contractuel sans signature.`,
-  "Facture_ATTIJARI_BANK.pdf": `Facture Attijari Bank N° FAC-2026-0847. Client: WebSolutions SARL. Fournisseur: Attijari Bank.
-Montant TTC: 2915.50 TND. Date: 15/04/2026. Échéance: 15/06/2026. karim@websolutions.tn. IBAN TN59 1234 5678 9012 3456 7890.`,
-  "Facture_Duplicate_ATTIJARI.pdf": `Facture Attijari Bank N° FAC-2026-0848. Client: WebSolutions SARL. Fournisseur: Attijari Bank.
-Montant TTC: 2915.50 TND. Date: 16/04/2026. Échéance: 16/06/2026. Pack compte professionnel Premium. Doublon proche FAC-2026-0847.`,
-  "Lettre_Motivation_Syrine.pdf": `Lettre de motivation Syrine Mabrouk. Poste: Stage développement full-stack. Date: 10/04/2026.
-Candidature WebSolutions. React, Node.js, PostgreSQL. syrine.mabrouk@email.tn +216 98 123 456.`,
-  "Dossier_Candidature_Dupont.pdf": `Dossier candidature Jean Dupont. Candidat: Jean Dupont. Poste: Stage développement full-stack.
-jean.dupont@email.fr +33 6 12 34 56 78. Compétences React, TypeScript, Node.js, PostgreSQL, Git.`,
-  "Devis_Commercial_TELNET.pdf": `Devis commercial Telnet N° DEV-2026-0312. Client: WebSolutions SARL. Date: 20/04/2026.
-Montant TTC: 13976.55 TND. Audit réseau, firewall Fortinet, migration NAS, formation, support premium.`,
-  "Politique_Retention_RGPD.pdf": `Politique de rétention RGPD WebSolutions. Conformité données personnelles. DPO dpo@websolutions.tn.
-Contrats 5 ans, factures 10 ans, candidatures RH 24 mois. Droits accès rectification effacement. Date: 01/01/2026.`,
-};
-
 const DEMO_CUSTOM_FIELDS = [
   { name: "Date document", type: "date", documentType: "Facture" },
   { name: "Montant TTC", type: "text", documentType: "Facture" },
@@ -225,11 +202,11 @@ async function extractAndEmbedDemoDocument(documentId, def, filePath) {
     console.warn(`[demo-docs] extract failed ${def.originalName}:`, error.message);
   }
 
-  if (!String(text || "").trim() && DEMO_AI_TEXT[def.originalName]) {
-    const fallback = `${def.title}\n${def.description}\n${DEMO_AI_TEXT[def.originalName]}`;
-    const { updateExtractedText } = require("./documents.service");
-    await updateExtractedText(documentId, fallback.slice(0, 200000));
-    text = fallback;
+  if (!String(text || "").trim()) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[demo-docs] Aucun texte extrait pour ${def.originalName} — l'IA ne pourra pas analyser ce fichier.`,
+    );
   }
 
   const embed = await generateDocumentEmbedding(documentId);

@@ -27,7 +27,7 @@ const {
   queueDocumentEmbedding,
   searchDocumentsVector,
 } = require("./embedding.service");
-const { queueTextExtraction } = require("../../jobs/extract-text.job");
+const { queueTextExtraction, extractAndStoreText } = require("../../jobs/extract-text.job");
 const {
   documentsVisibleSql,
   resolveDocumentAccess,
@@ -185,6 +185,42 @@ router.post("/search-vector", authenticate, async (req, res, next) => {
         hint: result.fallback
           ? "Recherche classique ou lexique sémantique (pgvector / embeddings optionnels)"
           : undefined,
+      },
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+/** Ré-extrait le texte du fichier (PDF/DOCX) puis régénère l'embedding */
+router.post("/:id/extract-text", authenticate, async (req, res, next) => {
+  try {
+    const documentId = Number(req.params.id);
+    if (!Number.isFinite(documentId)) {
+      return res.status(400).json({ success: false, message: "Invalid document id" });
+    }
+    const ctx = await getDocumentWithAccess(req.user, documentId);
+    if (ctx.error) return res.status(ctx.error.status).json(ctx.error.body);
+    if (!assertMinAccess(ctx.access, "view")) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
+    const doc = ctx.docRow;
+    if (!doc.file_path) {
+      return res.status(400).json({ success: false, message: "Fichier source introuvable" });
+    }
+    const text = await extractAndStoreText({
+      documentId,
+      filePath: doc.file_path,
+      mimeType: doc.mime_type,
+      originalName: doc.original_name,
+    });
+    const embed = await generateDocumentEmbedding(documentId);
+    return res.json({
+      success: true,
+      data: {
+        textLength: String(text || "").length,
+        hasText: Boolean(String(text || "").trim()),
+        embedding: embed,
       },
     });
   } catch (error) {

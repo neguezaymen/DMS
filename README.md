@@ -40,6 +40,8 @@ npm run dev               # http://localhost:5173
 ### 3. Corpus démo pour l’IA _(recommandé avant les tests IA)_
 
 Les documents démo sont optimisés pour les modules IA (extraction, conformité, Q&R, métadonnées, routage).  
+L’**extraction de texte est automatique** à l’upload (PDF, DOCX, TXT) : `pdf-parse` puis secours `pdfjs-dist` si le PDF est difficile à lire. **Aucun texte IA artificiel n’est injecté** — l’assistant ne répond qu’à partir du contenu réellement extrait du fichier.
+
 **Une seule commande** régénère les fichiers, met à jour la base, extrait le texte et recalcule les embeddings :
 
 ```bash
@@ -178,6 +180,7 @@ L’admin peut agir à toutes les étapes sans changer de compte.
 | `npm run db:setup`               | `db:init` + `db:seed`                                          |
 | `npm run db:seed-candidature`    | Workflow candidature Dupont + instance en attente RH           |
 | `npm run db:demo-docs`           | Régénérer les 9 documents démo + extraction texte + embeddings |
+| `POST /api/v1/documents/:id/extract-text` | Ré-extraire le texte d’un document + recalcul embedding |
 | `npm run reindex:embeddings`     | Réindexer les embeddings (recherche vectorielle)               |
 | `node scripts/reset-ai-quota.js` | Remettre à zéro quotas / historique IA générative              |
 | `npm run test`                   | Tests Jest                                                     |
