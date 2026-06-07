@@ -13,9 +13,12 @@ const {
 const { isAdmin } = require("../../middlewares/auth");
 const {
   DEFAULT_MODEL,
+  resolveChatModel,
+  getAiProvider,
   applyTemplate,
   callOpenAI,
   recordGeneration,
+  assertOpenAIKey,
   assertQuota,
   ensureQuota,
   ensureDefaultTemplates,
@@ -35,8 +38,10 @@ const { buildAiResponse } = require("./ai.response");
 const { runAiTask } = require("./ai.orchestrator");
 const { suggestWorkflowFromText } = require("./capabilities/workflowSuggest");
 const { analyzeUploadFile } = require("./capabilities/uploadInsights");
-const { scanCorpusCompliance, analyzeDocumentCompliance } = require("./capabilities/complianceScan");
-const { buildDemoCorpusAnswer } = require("./capabilities/corpusQa");
+const {
+  scanCorpusCompliance,
+  analyzeDocumentCompliance,
+} = require("./capabilities/complianceScan");
 const {
   extractMetadataFields,
   enrichDocumentRecord,
@@ -48,7 +53,10 @@ const {
 } = require("./capabilities/workflowRouting");
 
 const router = express.Router();
-const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
+const memUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 },
+});
 
 router.use((req, res, next) => {
   const started = Date.now();
@@ -60,14 +68,53 @@ router.use((req, res, next) => {
   const originalJson = res.json.bind(res);
   res.json = (payload) => {
     // eslint-disable-next-line no-console
-    console.log(`[AI][${req.method}] ${req.originalUrl} -> ${res.statusCode} (${Date.now() - started}ms)`, {
-      success: payload?.success,
-      keys: payload ? Object.keys(payload) : [],
-    });
+    console.log(
+      `[AI][${req.method}] ${req.originalUrl} -> ${res.statusCode} (${Date.now() - started}ms)`,
+      {
+        success: payload?.success,
+        keys: payload ? Object.keys(payload) : [],
+      },
+    );
     return originalJson(payload);
   };
   next();
 });
+
+router.use((req, res, next) => {
+  try {
+    assertOpenAIKey();
+    return next();
+  } catch (e) {
+    return res
+      .status(e.statusCode || 503)
+      .json({ success: false, message: e.message });
+  }
+});
+
+async function corpusQaWithOpenAI(question, accessible, model) {
+  const contextBlock = accessible
+    .map((d) => {
+      const txt = String(d.extracted_text || d.description || "").slice(0, 3000);
+      return `#${d.id} ${d.title}\n${txt || "(vide)"}\n`;
+    })
+    .join("\n---\n");
+  const out = await callOpenAI({
+    model: resolveChatModel(model),
+    systemPrompt:
+      "Tu es un assistant documentaire multi-documents. Réponds en français, cite les IDs des documents utilisés, et indique quand une info est absente.",
+    userPrompt: `Question: ${question}\n\nCorpus:\n${contextBlock}`,
+  });
+  return {
+    answer: out.content,
+    sources: accessible.map((d) => ({
+      id: d.id,
+      title: d.title,
+      excerpt: String(d.extracted_text || d.description || "").slice(0, 240),
+    })),
+    model: out.model,
+    tokensUsed: out.tokensUsed,
+  };
+}
 
 async function extractBufferText(file) {
   const mime = String(file.mimetype || "").toLowerCase();
@@ -84,7 +131,11 @@ async function extractBufferText(file) {
     const parsed = await mammoth.extractRawText({ buffer: file.buffer });
     return parsed.value || "";
   }
-  if (mime.startsWith("text/") || name.endsWith(".txt") || name.endsWith(".md")) {
+  if (
+    mime.startsWith("text/") ||
+    name.endsWith(".txt") ||
+    name.endsWith(".md")
+  ) {
     return file.buffer.toString("utf8");
   }
   return "";
@@ -111,7 +162,7 @@ router.get("/templates", async (req, res, next) => {
        FROM ai_templates
        WHERE is_custom = 0 OR created_by = ?
        ORDER BY is_custom ASC, created_at DESC`,
-      [req.user.id]
+      [req.user.id],
     );
     return res.json({ success: true, data: rows.rows });
   } catch (e) {
@@ -121,9 +172,22 @@ router.get("/templates", async (req, res, next) => {
 
 router.post("/templates", async (req, res, next) => {
   try {
-    const { name, description, systemPrompt, userPromptTemplate, language, tone, length } = req.body || {};
+    const {
+      name,
+      description,
+      systemPrompt,
+      userPromptTemplate,
+      language,
+      tone,
+      length,
+    } = req.body || {};
     if (!name || !systemPrompt || !userPromptTemplate) {
-      return res.status(400).json({ success: false, message: "name, systemPrompt et userPromptTemplate sont requis" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "name, systemPrompt et userPromptTemplate sont requis",
+        });
     }
     const ins = await query(
       `INSERT INTO ai_templates
@@ -138,9 +202,11 @@ router.post("/templates", async (req, res, next) => {
         tone ? String(tone) : "professionnel",
         length ? String(length) : "moyen",
         req.user.id,
-      ]
+      ],
     );
-    return res.status(201).json({ success: true, data: { id: ins.rows.insertId } });
+    return res
+      .status(201)
+      .json({ success: true, data: { id: ins.rows.insertId } });
   } catch (e) {
     return next(e);
   }
@@ -156,7 +222,7 @@ router.get("/generations", async (req, res, next) => {
        WHERE g.user_id = ?
        ORDER BY g.created_at DESC
        LIMIT 100`,
-      [req.user.id]
+      [req.user.id],
     );
     return res.json({ success: true, data: rows.rows });
   } catch (e) {
@@ -198,18 +264,50 @@ router.get("/hub", async (req, res, next) => {
         {
           quota,
           features: [
-            { id: "generate", path: "/ai-studio", label: "Génération de contenu" },
-            { id: "batch", path: "/ai-studio/batch", label: "Génération batch CSV" },
-            { id: "search", path: "/documents", label: "Recherche intelligente" },
-            { id: "assistant", path: "/documents", label: "Assistant document (fiche)" },
-            { id: "compliance", path: "/ai/compliance", label: "Conformité & risques" },
-            { id: "corpus-qa", path: "/ai/corpus-qa", label: "Q&R sur le corpus" },
-            { id: "metadata", path: "/ai/metadata", label: "Extraction métadonnées" },
-            { id: "routing", path: "/ai/workflow-routing", label: "Routage workflow" },
+            {
+              id: "generate",
+              path: "/ai-studio",
+              label: "Génération de contenu",
+            },
+            {
+              id: "batch",
+              path: "/ai-studio/batch",
+              label: "Génération batch CSV",
+            },
+            {
+              id: "search",
+              path: "/documents",
+              label: "Recherche intelligente",
+            },
+            {
+              id: "assistant",
+              path: "/documents",
+              label: "Assistant document (fiche)",
+            },
+            {
+              id: "compliance",
+              path: "/ai/compliance",
+              label: "Conformité & risques",
+            },
+            {
+              id: "corpus-qa",
+              path: "/ai/corpus-qa",
+              label: "Q&R sur le corpus",
+            },
+            {
+              id: "metadata",
+              path: "/ai/metadata",
+              label: "Extraction métadonnées",
+            },
+            {
+              id: "routing",
+              path: "/ai/workflow-routing",
+              label: "Routage workflow",
+            },
           ],
         },
-        { action: "hub" }
-      )
+        { action: "hub" },
+      ),
     );
   } catch (e) {
     return next(e);
@@ -218,7 +316,10 @@ router.get("/hub", async (req, res, next) => {
 
 router.get("/admin/usage", async (req, res, next) => {
   try {
-    if (!isAdmin(req.user)) return res.status(403).json({ success: false, message: "Admin access required" });
+    if (!isAdmin(req.user))
+      return res
+        .status(403)
+        .json({ success: false, message: "Admin access required" });
     const { usageCols } = await getSchema();
     const tokensExpr = usageCols.has("tokens")
       ? "COALESCE(SUM(u.tokens), 0)"
@@ -257,15 +358,21 @@ router.post("/generate", async (req, res, next) => {
       stream,
       templateKind,
     } = req.body || {};
-    if (!templateId) return res.status(400).json({ success: false, message: "templateId requis" });
+    if (!templateId)
+      return res
+        .status(400)
+        .json({ success: false, message: "templateId requis" });
 
-    const t = await query("SELECT * FROM ai_templates WHERE id = ? AND (is_custom = 0 OR created_by = ?)", [
-      Number(templateId),
-      req.user.id,
-    ]);
-    if (!t.rows.length) return res.status(404).json({ success: false, message: "Template introuvable" });
+    const t = await query(
+      "SELECT * FROM ai_templates WHERE id = ? AND (is_custom = 0 OR created_by = ?)",
+      [Number(templateId), req.user.id],
+    );
+    if (!t.rows.length)
+      return res
+        .status(404)
+        .json({ success: false, message: "Template introuvable" });
     const tpl = t.rows[0];
-    const chosenModel = model || DEFAULT_MODEL;
+    const chosenModel = resolveChatModel(model);
     const systemPrompt = tpl.system_prompt;
     const userPrompt = applyTemplate(tpl.user_prompt_template, {
       language,
@@ -310,7 +417,9 @@ router.post("/generate", async (req, res, next) => {
       for (let i = 0; i < words.length; i += 1) {
         res.write(`data: ${JSON.stringify({ chunk: `${words[i]} ` })}\n\n`);
       }
-      res.write(`data: ${JSON.stringify({ done: true, generationId: rec.generationId })}\n\n`);
+      res.write(
+        `data: ${JSON.stringify({ done: true, generationId: rec.generationId })}\n\n`,
+      );
       return res.end();
     }
 
@@ -335,19 +444,32 @@ router.post("/summarize/:documentId", async (req, res, next) => {
     const documentId = Number(req.params.documentId);
     const ctx = await getDocumentWithAccess(req.user, documentId);
     if (ctx.error) return res.status(ctx.error.status).json(ctx.error.body);
-    if (!assertMinAccess(ctx.access, "view")) return res.status(403).json({ success: false, message: "Access denied" });
+    if (!assertMinAccess(ctx.access, "view"))
+      return res.status(403).json({ success: false, message: "Access denied" });
 
-    const text = String(ctx.docRow.extracted_text || ctx.docRow.description || "").slice(0, 12000);
+    const text = String(
+      ctx.docRow.extracted_text || ctx.docRow.description || "",
+    ).slice(0, 12000);
     if (!text.trim()) {
-      return res.status(400).json({ success: false, message: "Aucun texte extractible disponible" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "Aucun texte extractible disponible",
+        });
     }
-    const chosenModel = req.body?.model || DEFAULT_MODEL;
-    const systemPrompt = "Tu es un assistant d'analyse documentaire. Réponds en JSON strict.";
+    const chosenModel = resolveChatModel(req.body?.model);
+    const systemPrompt =
+      "Tu es un assistant d'analyse documentaire. Réponds en JSON strict.";
     const userPrompt = `Résume le document suivant avec la structure JSON:
 {"key_points": ["..."], "actions": ["..."], "risks": ["..."]}
 Document:
 ${text}`;
-    const out = await callOpenAI({ model: chosenModel, systemPrompt, userPrompt });
+    const out = await callOpenAI({
+      model: chosenModel,
+      systemPrompt,
+      userPrompt,
+    });
     const rec = await recordGeneration({
       userId: req.user.id,
       documentId,
@@ -365,7 +487,10 @@ ${text}`;
       metadata: { generationId: rec.generationId, model: out.model },
       ipAddress: req.ip,
     });
-    return res.json({ success: true, data: { id: rec.generationId, output: out.content, model: out.model } });
+    return res.json({
+      success: true,
+      data: { id: rec.generationId, output: out.content, model: out.model },
+    });
   } catch (e) {
     return next(e);
   }
@@ -374,29 +499,50 @@ ${text}`;
 router.post("/classify", memUpload.single("file"), async (req, res, next) => {
   try {
     await assertQuota(req.user.id);
-    const { documentId, document_id: documentIdAlias, text = "", model } = req.body || {};
-    const effectiveDocumentId = documentId != null ? documentId : documentIdAlias;
+    const {
+      documentId,
+      document_id: documentIdAlias,
+      text = "",
+      model,
+    } = req.body || {};
+    const effectiveDocumentId =
+      documentId != null ? documentId : documentIdAlias;
     let content = String(text || "");
     let targetDocumentId = null;
     if (effectiveDocumentId != null) {
-      const ctx = await getDocumentWithAccess(req.user, Number(effectiveDocumentId));
+      const ctx = await getDocumentWithAccess(
+        req.user,
+        Number(effectiveDocumentId),
+      );
       if (ctx.error) return res.status(ctx.error.status).json(ctx.error.body);
-      if (!assertMinAccess(ctx.access, "view")) return res.status(403).json({ success: false, message: "Access denied" });
+      if (!assertMinAccess(ctx.access, "view"))
+        return res
+          .status(403)
+          .json({ success: false, message: "Access denied" });
       targetDocumentId = Number(effectiveDocumentId);
-      content = String(ctx.docRow.extracted_text || ctx.docRow.description || "").slice(0, 8000);
+      content = String(
+        ctx.docRow.extracted_text || ctx.docRow.description || "",
+      ).slice(0, 8000);
     } else if (req.file) {
       const extracted = await extractBufferText(req.file);
       content = String(extracted || "").slice(0, 8000);
     }
-    if (!content.trim()) return res.status(400).json({ success: false, message: "Texte à classer requis" });
+    if (!content.trim())
+      return res
+        .status(400)
+        .json({ success: false, message: "Texte à classer requis" });
 
-    const chosenModel = model || DEFAULT_MODEL;
+    const chosenModel = resolveChatModel(model);
     const systemPrompt = "Tu classifies des documents. Réponds en JSON strict.";
     const userPrompt = `Propose une classification JSON:
 {"category":"...","tags":["..."],"custom_fields":{"client":"...","project":"..."}}
 Texte:
 ${content}`;
-    const out = await callOpenAI({ model: chosenModel, systemPrompt, userPrompt });
+    const out = await callOpenAI({
+      model: chosenModel,
+      systemPrompt,
+      userPrompt,
+    });
     const rec = await recordGeneration({
       userId: req.user.id,
       documentId: targetDocumentId,
@@ -414,7 +560,10 @@ ${content}`;
       metadata: { generationId: rec.generationId, model: out.model },
       ipAddress: req.ip,
     });
-    return res.json({ success: true, data: { id: rec.generationId, output: out.content, model: out.model } });
+    return res.json({
+      success: true,
+      data: { id: rec.generationId, output: out.content, model: out.model },
+    });
   } catch (e) {
     return next(e);
   }
@@ -425,20 +574,26 @@ router.post("/document-chat/:documentId", async (req, res, next) => {
     await assertQuota(req.user.id);
     const documentId = Number(req.params.documentId);
     const question = String(req.body?.question || "").trim();
-    if (!question) return res.status(400).json({ success: false, message: "Question requise" });
+    if (!question)
+      return res
+        .status(400)
+        .json({ success: false, message: "Question requise" });
 
     const ctx = await getDocumentWithAccess(req.user, documentId);
     if (ctx.error) return res.status(ctx.error.status).json(ctx.error.body);
-    if (!assertMinAccess(ctx.access, "view")) return res.status(403).json({ success: false, message: "Access denied" });
+    if (!assertMinAccess(ctx.access, "view"))
+      return res.status(403).json({ success: false, message: "Access denied" });
 
-    const docText = String(ctx.docRow.extracted_text || ctx.docRow.description || "").slice(0, 15000);
+    const docText = String(
+      ctx.docRow.extracted_text || ctx.docRow.description || "",
+    ).slice(0, 15000);
     const hist = await query(
       `SELECT input_text, output_text
        FROM ai_generations
        WHERE user_id = ? AND document_id = ? AND action = 'chat'
        ORDER BY created_at DESC
        LIMIT 6`,
-      [req.user.id, documentId]
+      [req.user.id, documentId],
     );
     const historyBlock = hist.rows
       .reverse()
@@ -458,7 +613,7 @@ ${historyBlock || "(aucun)"}
 Question utilisateur:
 ${question}`;
     const out = await callOpenAI({
-      model: req.body?.model || DEFAULT_MODEL,
+      model: resolveChatModel(req.body?.model),
       systemPrompt,
       userPrompt,
     });
@@ -500,17 +655,30 @@ router.post("/search-natural", async (req, res, next) => {
     const phrase = String(req.body?.phrase || "").trim();
     const question = String(phrase || req.body?.question || "").trim();
     if (!question) {
-      return res.status(400).json({ success: false, error: "Phrase manquante", message: "Question requise" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error: "Phrase manquante",
+          message: "Question requise",
+        });
     }
 
     // Parse naturel simple + robuste (fallback déterministe)
     const ql = question.toLowerCase();
-    const filters = { search: "", category: "", status: "", dateFrom: "", dateTo: "" };
+    const filters = {
+      search: "",
+      category: "",
+      status: "",
+      dateFrom: "",
+      dateTo: "",
+    };
     if (ql.includes("facture")) filters.category = "Facture";
     else if (ql.includes("contrat")) filters.category = "Contrat";
     else if (ql.includes("rapport")) filters.category = "Rapport";
     if (ql.includes("approuv")) filters.status = "approved";
-    else if (ql.includes("en attente") || ql.includes("pending")) filters.status = "pending";
+    else if (ql.includes("en attente") || ql.includes("pending"))
+      filters.status = "pending";
     else if (ql.includes("rejet")) filters.status = "rejected";
     else if (ql.includes("archiv")) filters.status = "archived";
     else if (ql.includes("actif")) filters.status = "active";
@@ -541,11 +709,20 @@ router.post("/search-natural", async (req, res, next) => {
       params.push(filters.status);
     }
     if (filters.search) {
-      sqlFilters.push("(d.title LIKE ? OR d.description LIKE ? OR d.tags LIKE ? OR d.extracted_text LIKE ?)");
-      params.push(`%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`);
+      sqlFilters.push(
+        "(d.title LIKE ? OR d.description LIKE ? OR d.tags LIKE ? OR d.extracted_text LIKE ?)",
+      );
+      params.push(
+        `%${filters.search}%`,
+        `%${filters.search}%`,
+        `%${filters.search}%`,
+        `%${filters.search}%`,
+      );
     }
     if (filters.dateFrom === "LAST_MONTH_START") {
-      sqlFilters.push("d.created_at >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')");
+      sqlFilters.push(
+        "d.created_at >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')",
+      );
       sqlFilters.push("d.created_at < DATE_FORMAT(CURDATE(), '%Y-%m-01')");
     }
     const where = sqlFilters.length ? `WHERE ${sqlFilters.join(" AND ")}` : "";
@@ -556,7 +733,7 @@ router.post("/search-natural", async (req, res, next) => {
        ${where}
        ORDER BY d.created_at DESC
        LIMIT 50`,
-      params
+      params,
     );
 
     const rec = await recordGeneration({
@@ -588,123 +765,159 @@ router.post("/search-natural", async (req, res, next) => {
     console.error("[AI] search-natural error:", e);
     // eslint-disable-next-line no-console
     console.error("[AI] error stack:", e?.stack);
-    return res.status(500).json({ success: false, error: e?.message || "Internal server error" });
+    return res
+      .status(500)
+      .json({ success: false, error: e?.message || "Internal server error" });
   }
 });
 
-router.post("/deduplicate-upload-check", memUpload.single("file"), async (req, res, next) => {
-  try {
-    await assertQuota(req.user.id);
-    const file = req.file;
-    if (!file) return res.status(400).json({ success: false, message: "Fichier requis" });
-    const candidateText = (await extractBufferText(file)).slice(0, 15000);
-    if (!candidateText.trim()) {
-      return res.json({
-        success: true,
-        data: { similar: [], note: "Texte non extractible pour ce type de fichier" },
-      });
-    }
+router.post(
+  "/deduplicate-upload-check",
+  memUpload.single("file"),
+  async (req, res, next) => {
+    try {
+      await assertQuota(req.user.id);
+      const file = req.file;
+      if (!file)
+        return res
+          .status(400)
+          .json({ success: false, message: "Fichier requis" });
+      const candidateText = (await extractBufferText(file)).slice(0, 15000);
+      if (!candidateText.trim()) {
+        return res.json({
+          success: true,
+          data: {
+            similar: [],
+            note: "Texte non extractible pour ce type de fichier",
+          },
+        });
+      }
 
-    const pool = await query(
-      `SELECT id, title, original_name, category, created_at, extracted_text
+      const pool = await query(
+        `SELECT id, title, original_name, category, created_at, extracted_text
        FROM documents
        WHERE extracted_text IS NOT NULL AND extracted_text <> ''
        ORDER BY created_at DESC
-       LIMIT 300`
-    );
-    const scored = pool.rows
-      .map((d) => ({
-        id: d.id,
-        title: d.title,
-        original_name: d.original_name,
-        category: d.category,
-        created_at: d.created_at,
-        similarity: Number((jaccard(candidateText, String(d.extracted_text || "")) * 100).toFixed(1)),
-      }))
-      .filter((x) => x.similarity >= 55)
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, 5);
+       LIMIT 300`,
+      );
+      const scored = pool.rows
+        .map((d) => ({
+          id: d.id,
+          title: d.title,
+          original_name: d.original_name,
+          category: d.category,
+          created_at: d.created_at,
+          similarity: Number(
+            (
+              jaccard(candidateText, String(d.extracted_text || "")) * 100
+            ).toFixed(1),
+          ),
+        }))
+        .filter((x) => x.similarity >= 55)
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, 5);
 
-    const rec = await recordGeneration({
-      userId: req.user.id,
-      action: "deduplicate",
-      inputText: file.originalname,
-      outputText: JSON.stringify(scored),
-      model: "jaccard",
-      tokensUsed: 1,
-    });
-    await logAudit({
-      actorId: req.user.id,
-      action: "ai.deduplicate_check",
-      entityType: "ai_generation",
-      entityId: String(rec.generationId),
-      metadata: { filename: file.originalname, similarCount: scored.length },
-      ipAddress: req.ip,
-    });
-    return res.json({ success: true, data: { similar: scored } });
-  } catch (e) {
-    return next(e);
-  }
-});
+      const rec = await recordGeneration({
+        userId: req.user.id,
+        action: "deduplicate",
+        inputText: file.originalname,
+        outputText: JSON.stringify(scored),
+        model: "jaccard",
+        tokensUsed: 1,
+      });
+      await logAudit({
+        actorId: req.user.id,
+        action: "ai.deduplicate_check",
+        entityType: "ai_generation",
+        entityId: String(rec.generationId),
+        metadata: { filename: file.originalname, similarCount: scored.length },
+        ipAddress: req.ip,
+      });
+      return res.json({ success: true, data: { similar: scored } });
+    } catch (e) {
+      return next(e);
+    }
+  },
+);
 
-router.post("/workflow-suggest-upload", memUpload.single("file"), async (req, res, next) => {
-  try {
-    const file = req.file;
-    if (!file) return res.status(400).json({ success: false, message: "Fichier requis" });
-    const payload = await runAiTask(req.user.id, {
-      action: "workflow_suggest",
-      run: async () => {
-        const text = (await extractBufferText(file)).slice(0, 8000);
-        const data = await suggestWorkflowFromText(`${file.originalname}\n${text}`);
-        return { data, source: "heuristic", tokensUsed: 0 };
-      },
-    });
-    return res.json(payload);
-  } catch (e) {
-    return next(e);
-  }
-});
+router.post(
+  "/workflow-suggest-upload",
+  memUpload.single("file"),
+  async (req, res, next) => {
+    try {
+      const file = req.file;
+      if (!file)
+        return res
+          .status(400)
+          .json({ success: false, message: "Fichier requis" });
+      const payload = await runAiTask(req.user.id, {
+        action: "workflow_suggest",
+        run: async () => {
+          const text = (await extractBufferText(file)).slice(0, 8000);
+          const data = await suggestWorkflowFromText(
+            `${file.originalname}\n${text}`,
+          );
+          return { data, source: "heuristic", tokensUsed: 0 };
+        },
+      });
+      return res.json(payload);
+    } catch (e) {
+      return next(e);
+    }
+  },
+);
 
-router.post("/upload-insights", memUpload.single("file"), async (req, res, next) => {
-  try {
-    const file = req.file;
-    if (!file) return res.status(400).json({ success: false, message: "Fichier requis" });
-    const payload = await runAiTask(req.user.id, {
-      action: "upload_insights",
-      run: async () => {
-        const data = await analyzeUploadFile({
-          user: req.user,
-          file,
-          extractText: extractBufferText,
-        });
-        return { data, source: "heuristic", tokensUsed: 0 };
-      },
-    });
-    await logAudit({
-      actorId: req.user.id,
-      action: "ai.upload_insights",
-      entityType: "ai_generation",
-      entityId: String(file.originalname),
-      metadata: {
-        category: payload.data?.detectedCategory,
-        workflowId: payload.data?.suggestedWorkflow?.id || null,
-      },
-      ipAddress: req.ip,
-    });
-    return res.json(payload);
-  } catch (e) {
-    return next(e);
-  }
-});
+router.post(
+  "/upload-insights",
+  memUpload.single("file"),
+  async (req, res, next) => {
+    try {
+      const file = req.file;
+      if (!file)
+        return res
+          .status(400)
+          .json({ success: false, message: "Fichier requis" });
+      const payload = await runAiTask(req.user.id, {
+        action: "upload_insights",
+        run: async () => {
+          const data = await analyzeUploadFile({
+            user: req.user,
+            file,
+            extractText: extractBufferText,
+          });
+          return { data, source: "heuristic", tokensUsed: 0 };
+        },
+      });
+      await logAudit({
+        actorId: req.user.id,
+        action: "ai.upload_insights",
+        entityType: "ai_generation",
+        entityId: String(file.originalname),
+        metadata: {
+          category: payload.data?.detectedCategory,
+          workflowId: payload.data?.suggestedWorkflow?.id || null,
+        },
+        ipAddress: req.ip,
+      });
+      return res.json(payload);
+    } catch (e) {
+      return next(e);
+    }
+  },
+);
 
 router.post("/report-multi-docs", async (req, res, next) => {
   try {
     await assertQuota(req.user.id);
     const ids = Array.isArray(req.body?.documentIds)
-      ? req.body.documentIds.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n > 0)
+      ? req.body.documentIds
+          .map((v) => Number(v))
+          .filter((n) => Number.isFinite(n) && n > 0)
       : [];
     if (ids.length === 0) {
-      return res.status(400).json({ success: false, message: "documentIds requis" });
+      return res
+        .status(400)
+        .json({ success: false, message: "documentIds requis" });
     }
     const unique = Array.from(new Set(ids)).slice(0, 20);
     const docs = [];
@@ -714,38 +927,33 @@ router.post("/report-multi-docs", async (req, res, next) => {
       if (!assertMinAccess(ctx.access, "view")) continue;
       docs.push(ctx.docRow);
     }
-    if (docs.length === 0) return res.status(403).json({ success: false, message: "Aucun document accessible" });
+    if (docs.length === 0)
+      return res
+        .status(403)
+        .json({ success: false, message: "Aucun document accessible" });
 
-    const perDoc = docs.map((d) => {
-      const text = String(d.extracted_text || d.description || "").slice(0, 5000);
-      const det = detectDocType(`${d.title}\n${text}`);
-      const bullets = tokenize(text).slice(0, 5);
-      return {
-        id: d.id,
-        title: d.title,
-        category: d.category || det.category,
-        keyPoints: bullets.length ? bullets : det.tags,
-      };
+    const contextBlock = docs
+      .map((d) => {
+        const text = String(d.extracted_text || d.description || "").slice(0, 4000);
+        return `#${d.id} ${d.title} [${d.category || "—"}]\n${text || "(vide)"}`;
+      })
+      .join("\n\n---\n\n");
+
+    const out = await callOpenAI({
+      model: resolveChatModel(req.body?.model),
+      systemPrompt:
+        "Tu rédiges des rapports de synthèse documentaire en français (sections numérotées, ton professionnel).",
+      userPrompt: `Produis un rapport structuré à partir de ces documents:\n\n${contextBlock}`,
     });
-
-    const intro = `Rapport IA multi-documents — ${new Date().toLocaleString("fr-FR")}\nDocuments analysés: ${perDoc.length}`;
-    const body = perDoc
-      .map(
-        (d, i) =>
-          `\n${i + 1}. ${d.title} (#${d.id})\n   Catégorie: ${d.category}\n   Points clés: ${d.keyPoints.join(", ")}`
-      )
-      .join("\n");
-    const conclusion =
-      "\nConclusion:\n- Vérifier les documents marqués sensibles.\n- Prioriser ceux liés aux catégories Contrat/Facture.\n- Lancer les workflows de validation recommandés.";
-    const reportText = `${intro}\n${body}\n${conclusion}`;
+    const reportText = out.content;
 
     const rec = await recordGeneration({
       userId: req.user.id,
       action: "report_multi",
       inputText: JSON.stringify(unique),
       outputText: reportText,
-      model: "demo-heuristic",
-      tokensUsed: 1,
+      model: out.model,
+      tokensUsed: out.tokensUsed,
     });
     await logAudit({
       actorId: req.user.id,
@@ -755,7 +963,14 @@ router.post("/report-multi-docs", async (req, res, next) => {
       metadata: { documentIds: unique, analyzed: perDoc.length },
       ipAddress: req.ip,
     });
-    return res.json({ success: true, data: { reportText, documents: perDoc, generationId: rec.generationId } });
+    return res.json({
+      success: true,
+      data: {
+        reportText,
+        documents: docs.map((d) => ({ id: d.id, title: d.title, category: d.category })),
+        generationId: rec.generationId,
+      },
+    });
   } catch (e) {
     return next(e);
   }
@@ -775,7 +990,7 @@ router.get("/alerts", async (req, res, next) => {
          AND pl.expires_at IS NOT NULL
          AND pl.expires_at <= DATE_ADD(NOW(), INTERVAL 7 DAY)
        ORDER BY pl.expires_at ASC
-       LIMIT 20`
+       LIMIT 20`,
     );
     for (const r of exp.rows) {
       alerts.push({
@@ -793,11 +1008,15 @@ router.get("/alerts", async (req, res, next) => {
        FROM documents
        WHERE extracted_text IS NOT NULL AND extracted_text <> ''
        ORDER BY created_at DESC
-       LIMIT 200`
+       LIMIT 200`,
     );
     for (const d of risky.rows) {
       const txt = String(d.extracted_text || "").toLowerCase();
-      if (/(pénalité|penalty|résiliation|arbitrage|liability|indemnisation)/i.test(txt)) {
+      if (
+        /(pénalité|penalty|résiliation|arbitrage|liability|indemnisation)/i.test(
+          txt,
+        )
+      ) {
         alerts.push({
           type: "risk",
           severity: "high",
@@ -814,7 +1033,10 @@ router.get("/alerts", async (req, res, next) => {
       for (let j = i + 1; j < recent.length; j += 1) {
         const a = recent[i];
         const b = recent[j];
-        const sim = jaccard(String(a.extracted_text || "").slice(0, 4000), String(b.extracted_text || "").slice(0, 4000));
+        const sim = jaccard(
+          String(a.extracted_text || "").slice(0, 4000),
+          String(b.extracted_text || "").slice(0, 4000),
+        );
         if (sim >= 0.8) {
           alerts.push({
             type: "duplicate",
@@ -841,11 +1063,21 @@ router.get("/recommend-similar/:documentId", async (req, res, next) => {
     const documentId = Number(req.params.documentId);
     const ctx = await getDocumentWithAccess(req.user, documentId);
     if (ctx.error) return res.status(ctx.error.status).json(ctx.error.body);
-    if (!assertMinAccess(ctx.access, "view")) return res.status(403).json({ success: false, message: "Access denied" });
+    if (!assertMinAccess(ctx.access, "view"))
+      return res.status(403).json({ success: false, message: "Access denied" });
 
-    const baseText = String(ctx.docRow.extracted_text || ctx.docRow.description || "").slice(0, 15000);
+    const baseText = String(
+      ctx.docRow.extracted_text || ctx.docRow.description || "",
+    ).slice(0, 15000);
     if (!baseText.trim()) {
-      return res.json({ success: true, data: { documentId, similar: [], note: "Document source sans texte extractible" } });
+      return res.json({
+        success: true,
+        data: {
+          documentId,
+          similar: [],
+          note: "Document source sans texte extractible",
+        },
+      });
     }
 
     const pool = await query(
@@ -856,7 +1088,7 @@ router.get("/recommend-similar/:documentId", async (req, res, next) => {
          AND extracted_text <> ''
        ORDER BY created_at DESC
        LIMIT 400`,
-      [documentId]
+      [documentId],
     );
     const scored = pool.rows
       .map((d) => ({
@@ -864,7 +1096,9 @@ router.get("/recommend-similar/:documentId", async (req, res, next) => {
         title: d.title,
         category: d.category,
         created_at: d.created_at,
-        similarity: Number((jaccard(baseText, String(d.extracted_text || "")) * 100).toFixed(1)),
+        similarity: Number(
+          (jaccard(baseText, String(d.extracted_text || "")) * 100).toFixed(1),
+        ),
       }))
       .filter((x) => x.similarity >= 60)
       .sort((a, b) => b.similarity - a.similarity)
@@ -887,7 +1121,10 @@ router.get("/recommend-similar/:documentId", async (req, res, next) => {
       metadata: { count: scored.length, generationId: rec.generationId },
       ipAddress: req.ip,
     });
-    return res.json({ success: true, data: { documentId, similar: scored, generationId: rec.generationId } });
+    return res.json({
+      success: true,
+      data: { documentId, similar: scored, generationId: rec.generationId },
+    });
   } catch (e) {
     return next(e);
   }
@@ -899,7 +1136,9 @@ router.post("/multi-doc-qa", async (req, res, next) => {
       action: "corpus_qa",
       run: async () => {
         const ids = Array.isArray(req.body?.documentIds)
-          ? req.body.documentIds.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n > 0)
+          ? req.body.documentIds
+              .map((v) => Number(v))
+              .filter((n) => Number.isFinite(n) && n > 0)
           : [];
         const question = String(req.body?.question || "").trim();
         if (!ids.length) {
@@ -927,51 +1166,29 @@ router.post("/multi-doc-qa", async (req, res, next) => {
           throw err;
         }
 
-        const demo = buildDemoCorpusAnswer(question, accessible);
-        let answer = demo.answer;
-        let model = "demo-heuristic";
-        let tokensUsed = 0;
-
-        try {
-          const contextBlock = accessible
-            .map((d) => {
-              const txt = String(d.extracted_text || d.description || "").slice(0, 3000);
-              return `#${d.id} ${d.title}\n${txt || "(vide)"}\n`;
-            })
-            .join("\n---\n");
-          const out = await callOpenAI({
-            model: req.body?.model || DEFAULT_MODEL,
-            systemPrompt:
-              "Tu es un assistant documentaire multi-documents. Réponds en français, cite les IDs des documents utilisés, et indique quand une info est absente.",
-            userPrompt: `Question: ${question}\n\nCorpus:\n${contextBlock}`,
-          });
-          if (out.content && !String(out.model || "").includes("demo")) {
-            answer = out.content;
-            model = out.model;
-            tokensUsed = out.tokensUsed;
-          }
-        } catch {
-          /* keep demo answer */
-        }
+        const qa = await corpusQaWithOpenAI(question, accessible, resolveChatModel(req.body?.model));
 
         await recordGeneration({
           userId: req.user.id,
           action: "multi_doc_qa",
           inputText: JSON.stringify({ question, documentIds: unique }),
-          outputText: answer,
-          model,
-          tokensUsed,
+          outputText: qa.answer,
+          model: qa.model,
+          tokensUsed: qa.tokensUsed,
         });
 
         return {
           data: {
-            answer,
-            sources: demo.sources,
-            documentsUsed: accessible.map((d) => ({ id: d.id, title: d.title })),
+            answer: qa.answer,
+            sources: qa.sources,
+            documentsUsed: accessible.map((d) => ({
+              id: d.id,
+              title: d.title,
+            })),
           },
-          model,
-          tokensUsed,
-          source: String(model).includes("demo") ? "demo" : "openai",
+          model: qa.model,
+          tokensUsed: qa.tokensUsed,
+          source: getAiProvider(),
         };
       },
     });
@@ -985,8 +1202,10 @@ router.post("/multi-doc-qa", async (req, res, next) => {
     });
     return res.json(payload);
   } catch (e) {
-    if (e.status === 400) return res.status(400).json({ success: false, message: e.message });
-    if (e.status === 403) return res.status(403).json({ success: false, message: e.message });
+    if (e.status === 400)
+      return res.status(400).json({ success: false, message: e.message });
+    if (e.status === 403)
+      return res.status(403).json({ success: false, message: e.message });
     return next(e);
   }
 });
@@ -997,7 +1216,9 @@ router.post("/corpus-qa", async (req, res, next) => {
       action: "corpus_qa",
       run: async () => {
         const ids = Array.isArray(req.body?.documentIds)
-          ? req.body.documentIds.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n > 0)
+          ? req.body.documentIds
+              .map((v) => Number(v))
+              .filter((n) => Number.isFinite(n) && n > 0)
           : [];
         const question = String(req.body?.question || "").trim();
         if (!ids.length) {
@@ -1023,22 +1244,36 @@ router.post("/corpus-qa", async (req, res, next) => {
           err.status = 403;
           throw err;
         }
-        const demo = buildDemoCorpusAnswer(question, accessible);
+        const qa = await corpusQaWithOpenAI(question, accessible, resolveChatModel(req.body?.model));
+        await recordGeneration({
+          userId: req.user.id,
+          action: "corpus_qa",
+          inputText: JSON.stringify({ question, documentIds: unique }),
+          outputText: qa.answer,
+          model: qa.model,
+          tokensUsed: qa.tokensUsed,
+        });
         return {
           data: {
-            answer: demo.answer,
-            sources: demo.sources,
-            documentsUsed: accessible.map((d) => ({ id: d.id, title: d.title })),
+            answer: qa.answer,
+            sources: qa.sources,
+            documentsUsed: accessible.map((d) => ({
+              id: d.id,
+              title: d.title,
+            })),
           },
-          source: "demo",
-          tokensUsed: 0,
+          model: qa.model,
+          tokensUsed: qa.tokensUsed,
+          source: getAiProvider(),
         };
       },
     });
     return res.json(payload);
   } catch (e) {
-    if (e.status === 400) return res.status(400).json({ success: false, message: e.message });
-    if (e.status === 403) return res.status(403).json({ success: false, message: e.message });
+    if (e.status === 400)
+      return res.status(400).json({ success: false, message: e.message });
+    if (e.status === 403)
+      return res.status(403).json({ success: false, message: e.message });
     return next(e);
   }
 });
@@ -1179,7 +1414,10 @@ router.post("/extract-metadata/:documentId", async (req, res, next) => {
       action: "ai.extract_metadata",
       entityType: "document",
       entityId: String(documentId),
-      metadata: { mappedCount: enriched.mapped.length, generationId: rec.generationId },
+      metadata: {
+        mappedCount: enriched.mapped.length,
+        generationId: rec.generationId,
+      },
       ipAddress: req.ip,
     });
     return res.json({
@@ -1200,23 +1438,29 @@ router.post("/extract-metadata/:documentId", async (req, res, next) => {
 router.get("/predictive-alerts", async (req, res, next) => {
   try {
     await assertQuota(req.user.id);
-    const daysAhead = Math.min(90, Math.max(1, Number(req.query.daysAhead || 15)));
+    const daysAhead = Math.min(
+      90,
+      Math.max(1, Number(req.query.daysAhead || 15)),
+    );
     const docs = await query(
       `SELECT d.id, d.title, d.extracted_text, d.description, d.category, d.owner_id
        FROM documents d
        ORDER BY d.updated_at DESC
-       LIMIT 400`
+       LIMIT 400`,
     );
     const upcoming = [];
     const now = new Date();
     const horizon = new Date(now.getTime() + daysAhead * 86400000);
     for (const d of docs.rows) {
-      if (!isAdmin(req.user) && Number(d.owner_id) !== Number(req.user.id)) continue;
+      if (!isAdmin(req.user) && Number(d.owner_id) !== Number(req.user.id))
+        continue;
       const text = `${d.title}\n${String(d.extracted_text || "").slice(0, 8000)}\n${String(d.description || "")}`;
       const m = extractMetadataFields(text);
       const candidate = m.echeance || m.date;
       if (!candidate) continue;
-      const normalized = candidate.includes("/") ? candidate.split("/").reverse().join("-") : candidate;
+      const normalized = candidate.includes("/")
+        ? candidate.split("/").reverse().join("-")
+        : candidate;
       const dt = new Date(normalized);
       if (Number.isNaN(dt.getTime())) continue;
       if (dt >= now && dt <= horizon) {
@@ -1231,7 +1475,10 @@ router.get("/predictive-alerts", async (req, res, next) => {
         });
       }
     }
-    return res.json({ success: true, data: { daysAhead, alerts: upcoming.slice(0, 80) } });
+    return res.json({
+      success: true,
+      data: { daysAhead, alerts: upcoming.slice(0, 80) },
+    });
   } catch (e) {
     return next(e);
   }
@@ -1243,14 +1490,15 @@ router.post("/version-compare/:documentId", async (req, res, next) => {
     const documentId = Number(req.params.documentId);
     const ctx = await getDocumentWithAccess(req.user, documentId);
     if (ctx.error) return res.status(ctx.error.status).json(ctx.error.body);
-    if (!assertMinAccess(ctx.access, "view")) return res.status(403).json({ success: false, message: "Access denied" });
+    if (!assertMinAccess(ctx.access, "view"))
+      return res.status(403).json({ success: false, message: "Access denied" });
 
     const versions = await query(
       `SELECT id, version_number, file_path, comment, created_at
        FROM document_versions
        WHERE document_id = ?
        ORDER BY version_number DESC`,
-      [documentId]
+      [documentId],
     );
     const chosenA = Number(req.body?.versionAId || 0);
     const chosenB = Number(req.body?.versionBId || 0);
@@ -1263,20 +1511,50 @@ router.post("/version-compare/:documentId", async (req, res, next) => {
       a = versions.rows[1];
       b = versions.rows[0];
     } else {
-      return res.status(400).json({ success: false, message: "Au moins 2 versions sont nécessaires" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "Au moins 2 versions sont nécessaires",
+        });
     }
-    if (!a || !b) return res.status(400).json({ success: false, message: "Versions invalides" });
+    if (!a || !b)
+      return res
+        .status(400)
+        .json({ success: false, message: "Versions invalides" });
 
-    const textA = await extractFileText(a.file_path, ctx.docRow.mime_type, ctx.docRow.original_name);
-    const textB = await extractFileText(b.file_path, ctx.docRow.mime_type, ctx.docRow.original_name);
-    const linesA = String(textA || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-    const linesB = String(textB || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    const textA = await extractFileText(
+      a.file_path,
+      ctx.docRow.mime_type,
+      ctx.docRow.original_name,
+    );
+    const textB = await extractFileText(
+      b.file_path,
+      ctx.docRow.mime_type,
+      ctx.docRow.original_name,
+    );
+    const linesA = String(textA || "")
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const linesB = String(textB || "")
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
     const setA = new Set(linesA);
     const setB = new Set(linesB);
     const added = linesB.filter((l) => !setA.has(l)).slice(0, 30);
     const removed = linesA.filter((l) => !setB.has(l)).slice(0, 30);
-    const amountsA = Array.from(String(textA || "").matchAll(/\b([0-9]+(?:[.,][0-9]{2})?)\s*(?:dt|tnd|eur|usd|€|\$)\b/gi)).map((m) => m[0]);
-    const amountsB = Array.from(String(textB || "").matchAll(/\b([0-9]+(?:[.,][0-9]{2})?)\s*(?:dt|tnd|eur|usd|€|\$)\b/gi)).map((m) => m[0]);
+    const amountsA = Array.from(
+      String(textA || "").matchAll(
+        /\b([0-9]+(?:[.,][0-9]{2})?)\s*(?:dt|tnd|eur|usd|€|\$)\b/gi,
+      ),
+    ).map((m) => m[0]);
+    const amountsB = Array.from(
+      String(textB || "").matchAll(
+        /\b([0-9]+(?:[.,][0-9]{2})?)\s*(?:dt|tnd|eur|usd|€|\$)\b/gi,
+      ),
+    ).map((m) => m[0]);
     const summary =
       `Comparaison intelligente v${a.version_number} -> v${b.version_number}\n` +
       `- Lignes ajoutées: ${added.length}\n` +
@@ -1284,7 +1562,11 @@ router.post("/version-compare/:documentId", async (req, res, next) => {
       `- Montants détectés vA: ${amountsA.slice(0, 5).join(", ") || "aucun"}\n` +
       `- Montants détectés vB: ${amountsB.slice(0, 5).join(", ") || "aucun"}\n` +
       `- Clauses sensibles: ${
-        /(pénalité|penalty|résiliation|arbitrage|liability|indemnisation)/i.test(String(textB || "")) ? "présentes" : "non détectées"
+        /(pénalité|penalty|résiliation|arbitrage|liability|indemnisation)/i.test(
+          String(textB || ""),
+        )
+          ? "présentes"
+          : "non détectées"
       }`;
 
     const rec = await recordGeneration({
@@ -1299,8 +1581,16 @@ router.post("/version-compare/:documentId", async (req, res, next) => {
     return res.json({
       success: true,
       data: {
-        versionA: { id: a.id, versionNumber: a.version_number, createdAt: a.created_at },
-        versionB: { id: b.id, versionNumber: b.version_number, createdAt: b.created_at },
+        versionA: {
+          id: a.id,
+          versionNumber: a.version_number,
+          createdAt: a.created_at,
+        },
+        versionB: {
+          id: b.id,
+          versionNumber: b.version_number,
+          createdAt: b.created_at,
+        },
         summary,
         addedLines: added,
         removedLines: removed,
@@ -1313,56 +1603,73 @@ router.post("/version-compare/:documentId", async (req, res, next) => {
 });
 
 /** Génération batch (CSV → N PDF → ZIP) */
-router.post("/batch-generate", memUpload.single("file"), async (req, res, next) => {
-  try {
-    let rows = [];
-    if (req.file?.buffer) {
-      rows = parseCsvBuffer(req.file.buffer);
-    } else if (req.body?.rows) {
-      rows =
-        typeof req.body.rows === "string" ? JSON.parse(req.body.rows) : normalizeRows(req.body.rows);
+router.post(
+  "/batch-generate",
+  memUpload.single("file"),
+  async (req, res, next) => {
+    try {
+      let rows = [];
+      if (req.file?.buffer) {
+        rows = parseCsvBuffer(req.file.buffer);
+      } else if (req.body?.rows) {
+        rows =
+          typeof req.body.rows === "string"
+            ? JSON.parse(req.body.rows)
+            : normalizeRows(req.body.rows);
+      }
+      if (!rows.length) {
+        return res
+          .status(400)
+          .json({ success: false, message: "CSV ou rows JSON requis" });
+      }
+
+      const templateId = req.body?.templateId
+        ? Number(req.body.templateId)
+        : null;
+      const templateKind = req.body?.templateKind || "contrat";
+      const model = resolveChatModel(req.body?.model);
+
+      const zipBuffer = await generateBatchZip({
+        userId: req.user.id,
+        rows,
+        templateId,
+        templateKind,
+        model,
+      });
+
+      await logAudit({
+        actorId: req.user.id,
+        action: "ai.batch_generate",
+        entityType: "ai_batch",
+        metadata: { count: Math.min(rows.length, 25), templateKind },
+        ipAddress: req.ip,
+      });
+
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="dms-batch-${Date.now()}.zip"`,
+      );
+      return res.send(zipBuffer);
+    } catch (e) {
+      if (e.status === 429)
+        return res.status(429).json({ success: false, message: e.message });
+      if (e.statusCode)
+        return res
+          .status(e.statusCode)
+          .json({ success: false, message: e.message });
+      return next(e);
     }
-    if (!rows.length) {
-      return res.status(400).json({ success: false, message: "CSV ou rows JSON requis" });
-    }
-
-    const templateId = req.body?.templateId ? Number(req.body.templateId) : null;
-    const templateKind = req.body?.templateKind || "contrat";
-    const model = req.body?.model || DEFAULT_MODEL;
-
-    const zipBuffer = await generateBatchZip({
-      userId: req.user.id,
-      rows,
-      templateId,
-      templateKind,
-      model,
-    });
-
-    await logAudit({
-      actorId: req.user.id,
-      action: "ai.batch_generate",
-      entityType: "ai_batch",
-      metadata: { count: Math.min(rows.length, 25), templateKind },
-      ipAddress: req.ip,
-    });
-
-    res.setHeader("Content-Type", "application/zip");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="dms-batch-${Date.now()}.zip"`
-    );
-    return res.send(zipBuffer);
-  } catch (e) {
-    if (e.status === 429) return res.status(429).json({ success: false, message: e.message });
-    if (e.statusCode) return res.status(e.statusCode).json({ success: false, message: e.message });
-    return next(e);
-  }
-});
+  },
+);
 
 router.get("/batch-templates", async (req, res) => {
   return res.json({
     success: true,
-    data: Object.entries(BATCH_TEMPLATES).map(([key, v]) => ({ key, name: v.name })),
+    data: Object.entries(BATCH_TEMPLATES).map(([key, v]) => ({
+      key,
+      name: v.name,
+    })),
   });
 });
 

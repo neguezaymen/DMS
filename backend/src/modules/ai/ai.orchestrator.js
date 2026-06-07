@@ -1,10 +1,11 @@
-const { assertQuota, ensureQuota } = require("./ai.service");
+const { assertOpenAIKey, assertQuota, ensureQuota } = require("./ai.service");
 const { buildAiResponse } = require("./ai.response");
 
 /**
  * Exécute une action IA avec contrôle de quota et enveloppe de réponse standard.
  */
 async function runAiTask(userId, { action, model, run }) {
+  assertOpenAIKey();
   await assertQuota(userId);
   const result = await run();
   const quota = await ensureQuota(userId);

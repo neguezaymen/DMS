@@ -47,13 +47,14 @@ export default function AIStudioPage() {
   const [loading, setLoading] = useState(false)
   const [output, setOutput] = useState('')
   const [template, setTemplate] = useState('email')
+  const [availableModels, setAvailableModels] = useState<string[]>([])
   const [form, setForm] = useState({
     templateId: '',
     context: '',
     language: 'FR',
     tone: 'professionnel',
     length: 'moyen',
-    model: 'gpt-3.5-turbo',
+    model: '',
     stream: true,
   })
 
@@ -64,7 +65,16 @@ export default function AIStudioPage() {
         api.get('/ai-studio/quota'),
       ])
       setTemplates(tpl.data.data || [])
-      setQuota(q.data.data || { dailyLimit: 50, usedToday: 0 })
+      const quotaData = q.data.data || { dailyLimit: 50, usedToday: 0 }
+      setQuota(quotaData)
+      const models = Array.isArray(quotaData.availableModels)
+        ? quotaData.availableModels.filter(Boolean)
+        : []
+      const defaultModel = quotaData.defaultModel || models[0] || ''
+      setAvailableModels(models.length ? models : defaultModel ? [defaultModel] : [])
+      if (defaultModel) {
+        setForm((p) => ({ ...p, model: defaultModel }))
+      }
     } catch (e: any) {
       toast.error(e.response?.data?.message || t('aiStudio.loadError'))
     }
@@ -263,9 +273,13 @@ export default function AIStudioPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="gpt-3.5-turbo">{t('aiStudio.modelGpt35')}</SelectItem>
-                  <SelectItem value="gpt-4">{t('aiStudio.modelGpt4')}</SelectItem>
-                  <SelectItem value="gemini-pro">{t('aiStudio.modelGemini')}</SelectItem>
+                  {(availableModels.length ? availableModels : [form.model].filter(Boolean)).map(
+                    (id) => (
+                      <SelectItem key={id} value={id}>
+                        {id}
+                      </SelectItem>
+                    ),
+                  )}
                 </SelectContent>
               </Select>
             </div>

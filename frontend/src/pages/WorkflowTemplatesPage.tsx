@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Plus, Trash2 } from 'lucide-react'
+import { Loader2, Pencil, Plus, Trash2 } from 'lucide-react'
 import api from '../services/api/client'
 import Card from '../components/ui/Card'
 import { Button } from '@/components/shadcn/button'
@@ -29,6 +29,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/shadcn/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/shadcn/alert-dialog'
 import { useToast } from '../state/ToastContext'
 import {
   DEFAULT_DOCUMENT_CATEGORY,
@@ -88,13 +98,27 @@ function stepAssignsRole(step: any) {
   return normalizeAssigneeType(step?.assigneeType) === 'role'
 }
 
+function normalizeStepFromApi(raw: any, index: number) {
+  return {
+    stepOrder: Number(raw?.step_order ?? raw?.stepOrder ?? index + 1),
+    assigneeType: normalizeAssigneeType(raw?.assignee_type ?? raw?.assigneeType),
+    assigneeId: raw?.assignee_id ?? raw?.assigneeId ?? '',
+    dueHours: Number(raw?.due_hours ?? raw?.dueHours ?? 24),
+    reminderHours: Number(raw?.reminder_hours ?? raw?.reminderHours ?? 6),
+  }
+}
+
 export default function WorkflowTemplatesPage() {
   const { t } = useTranslation()
   const toast = useToast()
   const [templates, setTemplates] = useState<any[]>([])
   const [roles, setRoles] = useState<any[]>([])
   const [users, setUsers] = useState<any[]>([])
-  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [formDialogOpen, setFormDialogOpen] = useState(false)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [formLoading, setFormLoading] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
   const [categories, setCategories] = useState<string[]>(
     mergeDocumentCategories([...DOCUMENT_CATEGORY_PRESETS]),
   )
@@ -111,14 +135,7 @@ export default function WorkflowTemplatesPage() {
   const loadTemplates = async () => {
     try {
       const response = await api.get('/workflows/templates')
-      const seen = new Set<string>()
-      const rows = (response.data.data || []).filter((tpl: any) => {
-        const key = String(tpl.name || '').trim().toLowerCase()
-        if (!key || seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
-      setTemplates(rows)
+      setTemplates(response.data.data || [])
     } catch (error: any) {
       toast.error(error.response?.data?.message || t('workflowTemplates.loadError'))
     }
@@ -171,7 +188,8 @@ export default function WorkflowTemplatesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const resetCreateForm = () => {
+  const resetForm = () => {
+    setEditingId(null)
     setForm({
       name: '',
       description: '',
@@ -181,16 +199,41 @@ export default function WorkflowTemplatesPage() {
   }
 
   const openCreateForm = () => {
-    resetCreateForm()
-    setCreateDialogOpen(true)
+    resetForm()
+    setFormDialogOpen(true)
   }
 
-  const closeCreateForm = () => {
-    setCreateDialogOpen(false)
-    resetCreateForm()
+  const closeFormDialog = () => {
+    setFormDialogOpen(false)
+    resetForm()
   }
 
-  const createTemplate = async (event: React.FormEvent) => {
+  const openEditForm = async (template: any) => {
+    setFormLoading(true)
+    setEditingId(Number(template.id))
+    setFormDialogOpen(true)
+    try {
+      const stepsResponse = await api.get(`/workflows/templates/${template.id}/steps`)
+      const rawSteps = stepsResponse.data?.data || []
+      const steps =
+        rawSteps.length > 0
+          ? rawSteps.map((step: any, index: number) => normalizeStepFromApi(step, index))
+          : defaultStepsForRoles(roles)
+      setForm({
+        name: template.name || '',
+        description: template.description || '',
+        documentCategory: template.document_category || categories[0] || DEFAULT_DOCUMENT_CATEGORY,
+        steps,
+      })
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || t('workflowTemplates.loadStepsError'))
+      closeFormDialog()
+    } finally {
+      setFormLoading(false)
+    }
+  }
+
+  const saveTemplate = async (event: React.FormEvent) => {
     event.preventDefault()
     try {
       const steps = form.steps.map((step, index) => ({
@@ -206,12 +249,34 @@ export default function WorkflowTemplatesPage() {
         toast.error(t('workflowTemplates.stepAssigneeRequired'))
         return
       }
-      await api.post('/workflows/templates', { ...form, steps })
-      toast.success(t('workflowTemplates.created'))
-      closeCreateForm()
+      const payload = { ...form, steps }
+      if (editingId != null) {
+        await api.put(`/workflows/templates/${editingId}`, payload)
+        toast.success(t('workflowTemplates.updated'))
+      } else {
+        await api.post('/workflows/templates', payload)
+        toast.success(t('workflowTemplates.created'))
+      }
+      closeFormDialog()
       await loadTemplates()
     } catch (error: any) {
-      toast.error(error.response?.data?.message || t('workflowTemplates.createFail'))
+      const fallback = editingId != null ? t('workflowTemplates.updateFail') : t('workflowTemplates.createFail')
+      toast.error(error.response?.data?.message || fallback)
+    }
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    setDeleteLoading(true)
+    try {
+      await api.delete(`/workflows/templates/${deleteTarget.id}`)
+      toast.success(t('workflowTemplates.deleted'))
+      setDeleteTarget(null)
+      await loadTemplates()
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || t('workflowTemplates.deleteFail'))
+    } finally {
+      setDeleteLoading(false)
     }
   }
 
@@ -287,6 +352,7 @@ export default function WorkflowTemplatesPage() {
                 <TableHead>{t('workflowTemplates.colCategory')}</TableHead>
                 <TableHead>{t('workflowTemplates.colSteps')}</TableHead>
                 <TableHead>{t('workflowTemplates.colCreated')}</TableHead>
+                <TableHead className="w-[120px] text-right">{t('workflowTemplates.colActions')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -305,11 +371,33 @@ export default function WorkflowTemplatesPage() {
                       ? new Date(template.created_at).toLocaleDateString()
                       : t('common.emDash')}
                   </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        title={t('workflowTemplates.editModel')}
+                        onClick={() => void openEditForm(template)}
+                      >
+                        <Pencil className="size-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        title={t('workflowTemplates.deleteModel')}
+                        onClick={() => setDeleteTarget(template)}
+                      >
+                        <Trash2 className="size-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))}
               {templates.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground">
+                  <TableCell colSpan={5} className="text-center text-muted-foreground">
                     {t('workflowTemplates.emptyModels')}
                   </TableCell>
                 </TableRow>
@@ -320,18 +408,32 @@ export default function WorkflowTemplatesPage() {
       </Card>
 
       <Dialog
-        open={createDialogOpen}
+        open={formDialogOpen}
         onOpenChange={(open) => {
-          if (!open) closeCreateForm()
+          if (!open) closeFormDialog()
         }}
       >
         <DialogContent className="flex max-h-[90vh] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
           <DialogHeader className="border-b px-6 py-4">
-            <DialogTitle>{t('workflowTemplates.cardCreateTitle')}</DialogTitle>
-            <DialogDescription>{t('workflowTemplates.cardCreateSub')}</DialogDescription>
+            <DialogTitle>
+              {editingId != null
+                ? t('workflowTemplates.cardEditTitle')
+                : t('workflowTemplates.cardCreateTitle')}
+            </DialogTitle>
+            <DialogDescription>
+              {editingId != null
+                ? t('workflowTemplates.cardEditSub')
+                : t('workflowTemplates.cardCreateSub')}
+            </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={createTemplate} className="flex min-h-0 flex-1 flex-col">
+          {formLoading ? (
+            <div className="flex items-center justify-center gap-2 px-6 py-16 text-muted-foreground">
+              <Loader2 className="size-5 animate-spin" />
+              {t('common.loading')}
+            </div>
+          ) : (
+          <form onSubmit={saveTemplate} className="flex min-h-0 flex-1 flex-col">
             <div className="space-y-4 overflow-y-auto px-6 py-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
@@ -501,14 +603,55 @@ export default function WorkflowTemplatesPage() {
             </div>
 
             <DialogFooter className="border-t px-6 py-4 sm:justify-end">
-              <Button type="button" variant="outline" onClick={closeCreateForm}>
+              <Button type="button" variant="outline" onClick={closeFormDialog}>
                 {t('common.cancel')}
               </Button>
-              <Button type="submit">{t('workflowTemplates.submitCreate')}</Button>
+              <Button type="submit">
+                {editingId != null
+                  ? t('workflowTemplates.submitEdit')
+                  : t('workflowTemplates.submitCreate')}
+              </Button>
             </DialogFooter>
           </form>
+          )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={deleteTarget != null}
+        onOpenChange={(open) => {
+          if (!open && !deleteLoading) setDeleteTarget(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('workflowTemplates.deleteConfirmTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('workflowTemplates.deleteConfirmDesc', { name: deleteTarget?.name || '' })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteLoading}>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteLoading}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault()
+                void confirmDelete()
+              }}
+            >
+              {deleteLoading ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  {t('common.loading')}
+                </>
+              ) : (
+                t('workflowTemplates.deleteConfirmAction')
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

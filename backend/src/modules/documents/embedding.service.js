@@ -6,7 +6,12 @@ const { documentsVisibleSql } = require("./document-access.service");
 const { searchDocuments } = require("./search.service");
 
 const EMBEDDING_DIM = 384;
+const IA_PROVIDER = String(env.ai?.provider || process.env.IA_PROVIDER || "gemini")
+  .trim()
+  .toLowerCase();
 const OPENAI_KEY = String(env.ai?.openaiApiKey || process.env.OPENAI_API_KEY || "").trim();
+const GEMINI_KEY = String(env.ai?.geminiApiKey || process.env.GEMINI_API_KEY || "").trim();
+const { createGeminiEmbedding, createOpenAIEmbedding } = require("../ai/ai.provider");
 
 /** Cache : colonne MySQL embedding_json présente ? */
 let mysqlEmbeddingColumnReady = null;
@@ -107,17 +112,39 @@ async function createEmbeddingFromOpenAI(text) {
   return l2Normalize(emb.map(Number));
 }
 
+function assertEmbeddingCredentials() {
+  const ok = IA_PROVIDER === "gemini" ? Boolean(GEMINI_KEY) : Boolean(OPENAI_KEY);
+  if (!ok) {
+    const err = new Error(
+      IA_PROVIDER === "gemini"
+        ? "GEMINI_API_KEY requis pour les embeddings."
+        : "OPENAI_API_KEY requis pour les embeddings.",
+    );
+    err.statusCode = 503;
+    throw err;
+  }
+}
+
 async function createEmbeddingVector(text) {
   const trimmed = String(text || "").trim();
-  if (!trimmed) return fallbackEmbedding("");
-  if (OPENAI_KEY) {
-    try {
-      return await createEmbeddingFromOpenAI(trimmed);
-    } catch (err) {
-      console.warn("[embedding] OpenAI fallback:", err.message);
-    }
+  assertEmbeddingCredentials();
+  if (!trimmed) {
+    const err = new Error("Texte vide — impossible de générer un embedding.");
+    err.statusCode = 400;
+    throw err;
   }
-  return fallbackEmbedding(trimmed);
+  if (IA_PROVIDER === "gemini") {
+    return createGeminiEmbedding({
+      apiKey: GEMINI_KEY,
+      text: trimmed,
+      dimensions: EMBEDDING_DIM,
+    });
+  }
+  return createOpenAIEmbedding({
+    apiKey: OPENAI_KEY,
+    text: trimmed,
+    dimensions: EMBEDDING_DIM,
+  });
 }
 
 function buildDocumentEmbeddingText(doc) {
@@ -206,7 +233,7 @@ async function generateDocumentEmbedding(documentId) {
   return {
     ok: true,
     documentId,
-    source: OPENAI_KEY ? "openai" : "local",
+    source: IA_PROVIDER === "gemini" ? "gemini" : "openai",
     stored: { mysql: mysqlOk, pg: pgOk },
   };
 }
@@ -396,7 +423,7 @@ async function searchDocumentsVector({ q, user, limit = 15 }) {
       const mysqlHits = await searchMysqlEmbeddings(queryVector, user, fetchLimit);
       vectorRanked = mysqlHits.filter((h) => h.score >= MIN_VECTOR_SCORE);
       if (vectorRanked.length) {
-        vectorMode = OPENAI_KEY ? "openai-embedding" : "local-embedding";
+        vectorMode = IA_PROVIDER === "gemini" ? "gemini-embedding" : "openai-embedding";
       }
     }
   } catch (err) {

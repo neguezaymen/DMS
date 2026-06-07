@@ -1,13 +1,54 @@
 const { query } = require("../../config/db");
 const env = require("../../config/env");
+const {
+  callGeminiChat,
+  callOpenAIChat,
+} = require("./ai.provider");
 
-const DEFAULT_DAILY_LIMIT = Number(process.env.IA_DAILY_LIMIT || 50);
-const DEFAULT_MODEL = process.env.IA_MODEL || "gpt-3.5-turbo";
-const OPENAI_KEY = String(env.ai?.openaiApiKey || process.env.OPENAI_API_KEY || "").trim();
+const DEFAULT_DAILY_LIMIT = Number(env.ai?.dailyLimit || process.env.IA_DAILY_LIMIT || 300);
+const IA_PROVIDER = String(env.ai?.provider || process.env.IA_PROVIDER || "gemini")
+  .trim()
+  .toLowerCase();
+const DEFAULT_MODEL = String(
+  env.ai?.defaultModel || process.env.IA_MODEL || "gemini-2.5-flash-lite",
+).trim();
+const OPENAI_KEY = String(
+  env.ai?.openaiApiKey || process.env.OPENAI_API_KEY || "",
+).trim();
+const GEMINI_KEY = String(
+  env.ai?.geminiApiKey || process.env.GEMINI_API_KEY || "",
+).trim();
 
-if (!OPENAI_KEY) {
+function hasAiCredentials() {
+  return IA_PROVIDER === "gemini" ? Boolean(GEMINI_KEY) : Boolean(OPENAI_KEY);
+}
+
+if (!hasAiCredentials()) {
   // eslint-disable-next-line no-console
-  console.log("[AI] Mode démo activé (pas de clé OpenAI)");
+  console.error(
+    `[AI] Clé manquante pour le provider "${IA_PROVIDER}" — routes /ai-studio en erreur 503.`,
+  );
+} else {
+  // eslint-disable-next-line no-console
+  console.log(
+    `[AI] Provider ${IA_PROVIDER} activé (modèle économique: ${DEFAULT_MODEL}, quota/jour: ${DEFAULT_DAILY_LIMIT})`,
+  );
+}
+
+function assertOpenAIKey() {
+  if (!hasAiCredentials()) {
+    const err = new Error(
+      IA_PROVIDER === "gemini"
+        ? "GEMINI_API_KEY requis. Ajoutez votre clé Google AI dans backend/.env."
+        : "OPENAI_API_KEY requis. Ajoutez votre clé OpenAI dans backend/.env.",
+    );
+    err.statusCode = 503;
+    throw err;
+  }
+}
+
+function getAiProvider() {
+  return IA_PROVIDER;
 }
 let schemaCache = null;
 let schemaCachedAt = 0;
@@ -16,8 +57,18 @@ const COST_PER_1K = {
   "gpt-3.5-turbo": 0.001,
   "gpt-4": 0.03,
   "gpt-4o": 0.005,
+  "gpt-4o-mini": 0.00015,
+  "gpt-4.1-nano": 0.0001,
   "gemini-pro": 0.001,
+  "gemini-2.0-flash-lite": 0.00002,
+  "gemini-2.5-flash-lite": 0.00002,
+  "gemini-2.0-flash": 0.00005,
 };
+
+/** Modèle chat effectif — toujours celui configuré dans IA_MODEL / .env */
+function resolveChatModel(_requested) {
+  return DEFAULT_MODEL;
+}
 
 function estimateTokens(text) {
   return Math.max(1, Math.ceil(String(text || "").length / 4));
@@ -30,7 +81,49 @@ function estimateCost(model, tokens) {
 
 function topKeywords(text, limit = 8) {
   const stop = new Set([
-    "avec","dans","pour","vous","nous","cette","cela","that","this","from","your","have","will","les","des","une","the","and","est","sur","par","aux","du","de","la","le","un","une","et","ou","en","to","for","are","was","were","ce","ces","qui","que","quoi","not","pas",
+    "avec",
+    "dans",
+    "pour",
+    "vous",
+    "nous",
+    "cette",
+    "cela",
+    "that",
+    "this",
+    "from",
+    "your",
+    "have",
+    "will",
+    "les",
+    "des",
+    "une",
+    "the",
+    "and",
+    "est",
+    "sur",
+    "par",
+    "aux",
+    "du",
+    "de",
+    "la",
+    "le",
+    "un",
+    "une",
+    "et",
+    "ou",
+    "en",
+    "to",
+    "for",
+    "are",
+    "was",
+    "were",
+    "ce",
+    "ces",
+    "qui",
+    "que",
+    "quoi",
+    "not",
+    "pas",
   ]);
   const words = String(text || "")
     .toLowerCase()
@@ -47,17 +140,38 @@ function topKeywords(text, limit = 8) {
 
 function detectDocType(text) {
   const t = String(text || "").toLowerCase();
-  if (/(motivation|candidature|stage|alternance|poste|recrutement|lettre de motivation)/i.test(t)) {
-    return { category: "Lettre de motivation", tags: ["candidature", "stage", "recrutement", "motivation"] };
+  if (
+    /(motivation|candidature|stage|alternance|poste|recrutement|lettre de motivation)/i.test(
+      t,
+    )
+  ) {
+    return {
+      category: "Lettre de motivation",
+      tags: ["candidature", "stage", "recrutement", "motivation"],
+    };
   }
-  if (/(cv|curriculum vitae|compétences|competences|expérience|experience|formation)/i.test(t)) {
+  if (
+    /(cv|curriculum vitae|compétences|competences|expérience|experience|formation)/i.test(
+      t,
+    )
+  ) {
     return { category: "CV", tags: ["cv", "compétences", "expérience"] };
   }
-  if (/(lettre de motivation|motivation letter|candidature|postuler|stage)/i.test(t)) {
-    return { category: "Lettre de motivation", tags: ["candidature", "stage", "motivation"] };
+  if (
+    /(lettre de motivation|motivation letter|candidature|postuler|stage)/i.test(
+      t,
+    )
+  ) {
+    return {
+      category: "Lettre de motivation",
+      tags: ["candidature", "stage", "motivation"],
+    };
   }
   if (/(rapport de stage|internship report|stage report)/i.test(t)) {
-    return { category: "Rapport de stage", tags: ["informatique", "développement"] };
+    return {
+      category: "Rapport de stage",
+      tags: ["informatique", "développement"],
+    };
   }
   if (/(facture|invoice|tva|montant|échéance|payer|payment)/i.test(t)) {
     return { category: "Facture", tags: ["finance", "urgent"] };
@@ -94,7 +208,9 @@ function extractUserContextFromPrompt(prompt) {
     if (block?.[0]) {
       const lines = block[0]
         .split(/\n/)
-        .filter((line) => !/^contexte\s*:\s*non renseigné\s*$/i.test(line.trim()));
+        .filter(
+          (line) => !/^contexte\s*:\s*non renseigné\s*$/i.test(line.trim()),
+        );
       const joined = lines.join("\n").trim();
       if (joined) return joined;
     }
@@ -143,7 +259,7 @@ function buildDemoClassify(userPrompt) {
       custom_fields: fields,
     },
     null,
-    2
+    2,
   );
 }
 
@@ -154,7 +270,9 @@ function buildDemoSummary(userPrompt) {
   const det = detectDocType(text);
   const keyPoints = [
     `Type détecté: ${det.category}.`,
-    ...(det.category === "Lettre de motivation" ? ["Ce document est une lettre de motivation."] : []),
+    ...(det.category === "Lettre de motivation"
+      ? ["Ce document est une lettre de motivation."]
+      : []),
     `Mots-clés dominants: ${kws.slice(0, 4).join(", ") || "non déterminés"}.`,
     `Le document semble orienté vers: ${det.tags.join(", ")}.`,
     "Des éléments actionnables ont été identifiés dans le contenu.",
@@ -165,10 +283,16 @@ function buildDemoSummary(userPrompt) {
     "Archiver ou lancer un workflow d’approbation selon le type de document.",
   ];
   const risks = [];
-  if (/signature|clause|obligation|pénalité/i.test(text)) risks.push("Présence potentielle de clauses contractuelles sensibles.");
-  if (/échéance|deadline|urgent|retard/i.test(text)) risks.push("Risque de retard lié à une échéance.");
-  if (/montant|paiement|invoice|facture/i.test(text)) risks.push("Risque financier: vérifier montants et conditions de paiement.");
-  if (risks.length === 0) risks.push("Aucun risque majeur explicite détecté en mode démo.");
+  if (/signature|clause|obligation|pénalité/i.test(text))
+    risks.push("Présence potentielle de clauses contractuelles sensibles.");
+  if (/échéance|deadline|urgent|retard/i.test(text))
+    risks.push("Risque de retard lié à une échéance.");
+  if (/montant|paiement|invoice|facture/i.test(text))
+    risks.push(
+      "Risque financier: vérifier montants et conditions de paiement.",
+    );
+  if (risks.length === 0)
+    risks.push("Aucun risque majeur explicite détecté en mode démo.");
   return JSON.stringify({ key_points: keyPoints, actions, risks }, null, 2);
 }
 
@@ -201,7 +325,9 @@ function buildDemoContratFromVars(batchVars, userPrompt) {
     "- Collaboration avec les équipes métier et techniques.",
     "",
     "Article 4 — Contexte particulier",
-    contexte || extractUserContextFromPrompt(userPrompt) || "Conditions usuelles du secteur et du poste visé.",
+    contexte ||
+      extractUserContextFromPrompt(userPrompt) ||
+      "Conditions usuelles du secteur et du poste visé.",
     "",
     "Article 5 — Durée et clauses",
     "Contrat établi à titre de démonstration DMS. Les clauses définitives seront validées par les services juridiques.",
@@ -277,13 +403,26 @@ function buildDemoEmailProfessional(userPrompt, batchVars = null) {
   const det = detectDocType(context);
 
   let scenario = "generic";
-  if (/(stage|alternance|candidature|postuler|cv|motivation)/i.test(intentText)) scenario = "internship";
-  else if (/(reunion|meeting|reporte|replanifie|decale|decalage|calendrier|annulation|annule)/i.test(intentText))
+  if (/(stage|alternance|candidature|postuler|cv|motivation)/i.test(intentText))
+    scenario = "internship";
+  else if (
+    /(reunion|meeting|reporte|replanifie|decale|decalage|calendrier|annulation|annule)/i.test(
+      intentText,
+    )
+  )
     scenario = "meeting_reschedule";
-  else if (/(facture|invoice|impaye|relance|paiement|echeance)/i.test(intentText))
+  else if (
+    /(facture|invoice|impaye|relance|paiement|echeance)/i.test(intentText)
+  )
     scenario = "payment_reminder";
-  else if (/(merci|remerciement|gratitude|reconnaissance)/i.test(intentText)) scenario = "thanks";
-  else if (/(presentation|projet|dms|solution|plateforme|proposition)/i.test(intentText)) scenario = "project_intro";
+  else if (/(merci|remerciement|gratitude|reconnaissance)/i.test(intentText))
+    scenario = "thanks";
+  else if (
+    /(presentation|projet|dms|solution|plateforme|proposition)/i.test(
+      intentText,
+    )
+  )
+    scenario = "project_intro";
 
   let subject = "";
   const s1 = prompt.match(/sujet\s*[:\-]\s*([^\n]+)/i);
@@ -304,7 +443,8 @@ function buildDemoEmailProfessional(userPrompt, batchVars = null) {
   } else if (det.category === "Contrat") {
     subject = "Point de validation contractuelle";
   }
-  if (!subject) subject = `À propos : ${context.slice(0, 80) || "votre demande"}`;
+  if (!subject)
+    subject = `À propos : ${context.slice(0, 80) || "votre demande"}`;
 
   let recipient = "Bonjour,";
   const batchNom = readBatchVar(batchVars, "nom", "");
@@ -319,7 +459,9 @@ function buildDemoEmailProfessional(userPrompt, batchVars = null) {
   }
 
   let signature = "Sahar Neguez";
-  const sig = prompt.match(/(?:signature|signé par|signe par)\s*[:\-]\s*([^\n]+)/i);
+  const sig = prompt.match(
+    /(?:signature|signé par|signe par)\s*[:\-]\s*([^\n]+)/i,
+  );
   if (sig && sig[1]) signature = sig[1].trim();
 
   let intro = `Je fais suite à votre demande concernant : "${context || "votre sujet"}".`;
@@ -328,7 +470,8 @@ function buildDemoEmailProfessional(userPrompt, batchVars = null) {
     `- Élément complémentaire : ${kws[1] || "analyse du besoin"}`,
     `- Action recommandée : ${kws[2] || "validation et suite opérationnelle"}`,
   ];
-  let conclusion = "Je reste à votre disposition pour échanger davantage sur ce sujet.";
+  let conclusion =
+    "Je reste à votre disposition pour échanger davantage sur ce sujet.";
   let closing = "Cordialement,";
 
   if (scenario === "project_intro") {
@@ -341,9 +484,11 @@ function buildDemoEmailProfessional(userPrompt, batchVars = null) {
       "- Partage sécurisé interne/externe",
       "- Fonctions IA d'assistance et d'analyse",
     ];
-    conclusion = "Je serais ravi(e) de vous présenter une démonstration personnalisée.";
+    conclusion =
+      "Je serais ravi(e) de vous présenter une démonstration personnalisée.";
   } else if (scenario === "internship") {
-    intro = "Je me permets de vous adresser ma candidature pour un stage en développement web.";
+    intro =
+      "Je me permets de vous adresser ma candidature pour un stage en développement web.";
     bodyLines = [
       "- Motivation forte pour contribuer à des projets concrets",
       "- Compétences techniques en front-end, back-end et API",
@@ -353,9 +498,10 @@ function buildDemoEmailProfessional(userPrompt, batchVars = null) {
     conclusion = "Je reste disponible pour un entretien à votre convenance.";
   } else if (scenario === "meeting_reschedule") {
     const dateHint = context.match(
-      /\b(\d{1,2}\s*(?:janvier|fevrier|février|mars|avril|mai|juin|juillet|aout|août|septembre|octobre|novembre|decembre|décembre))\b/i
+      /\b(\d{1,2}\s*(?:janvier|fevrier|février|mars|avril|mai|juin|juillet|aout|août|septembre|octobre|novembre|decembre|décembre))\b/i,
     );
-    intro = "La réunion initialement prévue est reportée pour des raisons d'organisation.";
+    intro =
+      "La réunion initialement prévue est reportée pour des raisons d'organisation.";
     bodyLines = [
       `- Nouvelle date proposée : ${dateHint?.[1] || "à confirmer"}`,
       "- Merci de confirmer votre disponibilité",
@@ -363,17 +509,20 @@ function buildDemoEmailProfessional(userPrompt, batchVars = null) {
     ];
     conclusion = "Merci pour votre compréhension et votre retour.";
   } else if (scenario === "payment_reminder") {
-    const client = context.match(/client\s+([a-z0-9_\- ]+)/i)?.[1]?.trim() || "concerné";
+    const client =
+      context.match(/client\s+([a-z0-9_\- ]+)/i)?.[1]?.trim() || "concerné";
     intro = `Selon nos relevés, une facture reste impayée à ce jour (${client}).`;
     bodyLines = [
       "- Vérification du statut de paiement en cours",
       "- Merci de nous communiquer la date de règlement prévue",
       "- Les pièces justificatives peuvent être renvoyées sur demande",
     ];
-    conclusion = "Nous vous remercions de bien vouloir régulariser la situation dans les meilleurs délais.";
+    conclusion =
+      "Nous vous remercions de bien vouloir régulariser la situation dans les meilleurs délais.";
     closing = "Bien cordialement,";
   } else if (scenario === "thanks") {
-    intro = "Je tiens à vous remercier sincèrement pour votre aide sur le projet.";
+    intro =
+      "Je tiens à vous remercier sincèrement pour votre aide sur le projet.";
     bodyLines = [
       "- Votre accompagnement a facilité l'avancement des travaux",
       "- Vos retours ont amélioré la qualité du livrable",
@@ -408,8 +557,7 @@ function buildDemoReportDocumentaire(userPrompt) {
   const context = extractUserContextFromPrompt(prompt);
   const kws = topKeywords(context, 10);
   const det = detectDocType(context);
-  const titre =
-    context.trim().slice(0, 72) || "Synthèse du besoin";
+  const titre = context.trim().slice(0, 72) || "Synthèse du besoin";
 
   return [
     `RAPPORT SYNTHÉTIQUE`,
@@ -445,7 +593,8 @@ function buildDemoReportDocumentaire(userPrompt) {
 function buildDemoLinkedIn(userPrompt) {
   const context = extractUserContextFromPrompt(userPrompt);
   const kws = topKeywords(context, 8);
-  const hook = context.trim().slice(0, 140) || "Partager une initiative utile et concrète";
+  const hook =
+    context.trim().slice(0, 140) || "Partager une initiative utile et concrète";
 
   return [
     "POST LINKEDIN — Brouillon",
@@ -493,7 +642,18 @@ function normalizeTemplateKind(templateKind, templateName) {
   const raw = String(templateKind || "")
     .trim()
     .toLowerCase();
-  if (["email", "report", "linkedin", "note", "contrat", "devis", "lettre"].includes(raw)) return raw;
+  if (
+    [
+      "email",
+      "report",
+      "linkedin",
+      "note",
+      "contrat",
+      "devis",
+      "lettre",
+    ].includes(raw)
+  )
+    return raw;
   const tn = String(templateName || "")
     .toLowerCase()
     .normalize("NFD")
@@ -512,9 +672,13 @@ function pickDemoGenerateOutputByKind(userPrompt, kind, batchVars = null) {
         ? buildDemoContratFromVars(batchVars, userPrompt)
         : buildDemoReportDocumentaire(userPrompt);
     case "devis":
-      return batchVars ? buildDemoDevisFromVars(batchVars) : buildDemoReportDocumentaire(userPrompt);
+      return batchVars
+        ? buildDemoDevisFromVars(batchVars)
+        : buildDemoReportDocumentaire(userPrompt);
     case "lettre":
-      return batchVars ? buildDemoLettreFromVars(batchVars) : buildDemoEmailProfessional(userPrompt, batchVars);
+      return batchVars
+        ? buildDemoLettreFromVars(batchVars)
+        : buildDemoEmailProfessional(userPrompt, batchVars);
     case "report":
       return buildDemoReportDocumentaire(userPrompt);
     case "linkedin":
@@ -529,19 +693,25 @@ function pickDemoGenerateOutputByKind(userPrompt, kind, batchVars = null) {
 
 /** @deprecated utiliser normalizeTemplateKind + pickDemoGenerateOutputByKind */
 function pickDemoGenerateOutput(userPrompt, templateName = "") {
-  return pickDemoGenerateOutputByKind(userPrompt, normalizeTemplateKind("", templateName));
+  return pickDemoGenerateOutputByKind(
+    userPrompt,
+    normalizeTemplateKind("", templateName),
+  );
 }
 
 /** Renforce le system prompt quand l’API OpenAI réelle est utilisée (AI Studio). */
-function augmentSystemPromptForStudio(systemPrompt, templateKind, templateName) {
+function augmentSystemPromptForStudio(
+  systemPrompt,
+  templateKind,
+  templateName,
+) {
   const kind = normalizeTemplateKind(templateKind, templateName);
   const blocks = {
     report:
       "\n\n[Format obligatoire] Produis un RAPPORT ou une SYNTHÈSE structurée (sections numérotées). Interdit : courriel (pas de « Objet : », pas de « Bonjour, », pas de formule de mail).",
     linkedin:
       "\n\n[Format obligatoire] Post LinkedIn (accroche, corps court, hashtags en fin). Interdit : format email.",
-    note:
-      "\n\n[Format obligatoire] Note interne / mémo (titres courts, puces, décisions). Interdit : format email.",
+    note: "\n\n[Format obligatoire] Note interne / mémo (titres courts, puces, décisions). Interdit : format email.",
     email: "",
   };
   return String(systemPrompt || "") + (blocks[kind] || "");
@@ -570,7 +740,13 @@ async function getTableColumns(tableName) {
   const params = [tableName];
   logSql(sql, params);
   const rows = await query(sql, params);
-  return new Set(rows.rows.map((r) => String(r.column_name || "").toLowerCase().trim()));
+  return new Set(
+    rows.rows.map((r) =>
+      String(r.column_name || "")
+        .toLowerCase()
+        .trim(),
+    ),
+  );
 }
 
 async function getSchema() {
@@ -597,7 +773,9 @@ async function ensureQuota(userId) {
   if (!quotaCols.has("user_id")) {
     // Fail-open with explicit warning to keep upload/AI usable.
     // eslint-disable-next-line no-console
-    console.warn("[AI] ai_quotas schema mismatch (user_id missing). Quota disabled temporarily.");
+    console.warn(
+      "[AI] ai_quotas schema mismatch (user_id missing). Quota disabled temporarily.",
+    );
     return { dailyLimit: 10_000_000, usedToday: 0 };
   }
 
@@ -617,7 +795,8 @@ async function ensureQuota(userId) {
   logSql(sqlReset, pReset);
   await query(sqlReset, pReset);
 
-  const sqlSelect = "SELECT daily_limit, used_today FROM ai_quotas WHERE user_id = ?";
+  const sqlSelect =
+    "SELECT daily_limit, used_today FROM ai_quotas WHERE user_id = ?";
   const pSelect = [userId];
   logSql(sqlSelect, pSelect);
   let q;
@@ -663,63 +842,30 @@ async function callOpenAI({
   batchPresetKind = null,
 }) {
   const studioKind =
-    templateName || templateKind ? normalizeTemplateKind(templateKind, templateName) : null;
-  const demoKind = batchPresetKind || studioKind;
-
-  if (!OPENAI_KEY) {
-    // Mode démo avancé: simule des réponses spécialisées selon l'intention détectée.
-    const up = String(userPrompt || "");
-    let fallback = "";
-    if (/classification json|custom_fields|\"category\"/i.test(up)) {
-      fallback = buildDemoClassify(up);
-    } else if (batchVars && demoKind) {
-      fallback = pickDemoGenerateOutputByKind(up, demoKind, batchVars);
-    } else if (studioKind) {
-      // AI Studio /generate : toujours avant les heuristiques « résumé » (évite faux positifs sur "actions", etc.)
-      fallback = pickDemoGenerateOutputByKind(up, studioKind, batchVars);
-    } else if (looksLikeDocumentSummaryPrompt(up)) {
-      fallback = buildDemoSummary(up);
-    } else {
-      fallback = buildDemoEmailProfessional(up);
-    }
-    return {
-      content: fallback,
-      tokensUsed: estimateTokens(systemPrompt) + estimateTokens(fallback),
-      model: `${model || DEFAULT_MODEL}-demo`,
-    };
-  }
-  // eslint-disable-next-line no-console
-  console.log("[AI] Using REAL OpenAI API, not demo mode");
+    templateName || templateKind
+      ? normalizeTemplateKind(templateKind, templateName)
+      : null;
+  assertOpenAIKey();
 
   const systemEffective = studioKind
     ? augmentSystemPromptForStudio(systemPrompt, templateKind, templateName)
     : systemPrompt;
 
-  const r = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENAI_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.4,
-      messages: [
-        { role: "system", content: systemEffective },
-        { role: "user", content: userPrompt },
-      ],
-    }),
-  });
-  if (!r.ok) {
-    const txt = await r.text();
-    const err = new Error(`Erreur provider IA: ${txt}`);
-    err.status = 502;
-    throw err;
+  const chosenModel = resolveChatModel(model);
+  if (IA_PROVIDER === "gemini") {
+    return callGeminiChat({
+      apiKey: GEMINI_KEY,
+      model: chosenModel,
+      systemPrompt: systemEffective,
+      userPrompt,
+    });
   }
-  const data = await r.json();
-  const content = data.choices?.[0]?.message?.content || "";
-  const tokensUsed = Number(data.usage?.total_tokens || estimateTokens(content));
-  return { content, tokensUsed, model };
+  return callOpenAIChat({
+    apiKey: OPENAI_KEY,
+    model: chosenModel,
+    systemPrompt: systemEffective,
+    userPrompt,
+  });
 }
 
 async function recordGeneration({
@@ -782,7 +928,8 @@ async function recordGeneration({
   }
 
   if (generationId != null) {
-    const quotaSql = "UPDATE ai_quotas SET used_today = used_today + 1 WHERE user_id = ?";
+    const quotaSql =
+      "UPDATE ai_quotas SET used_today = used_today + 1 WHERE user_id = ?";
     const quotaParams = [userId];
     logSql(quotaSql, quotaParams);
     await query(quotaSql, quotaParams).catch(() => {});
@@ -808,6 +955,9 @@ async function getUsageAndQuota(userId) {
     calls: Number(usage.rows[0]?.calls || 0),
     tokens: Number(usage.rows[0]?.tokens || 0),
     ...quota,
+    defaultModel: DEFAULT_MODEL,
+    availableModels: [DEFAULT_MODEL],
+    provider: IA_PROVIDER,
   };
 }
 
@@ -817,7 +967,7 @@ async function resetUserQuota(userId) {
     `UPDATE ai_quotas
      SET used_today = 0, last_reset_date = CURRENT_DATE
      WHERE user_id = ?`,
-    [userId]
+    [userId],
   );
   return getUsageAndQuota(userId);
 }
@@ -834,26 +984,52 @@ async function resetUserAiState(userId) {
 }
 
 async function ensureDefaultTemplates(userId) {
-  const count = await query("SELECT COUNT(*) AS c FROM ai_templates WHERE is_custom = 0");
+  const count = await query(
+    "SELECT COUNT(*) AS c FROM ai_templates WHERE is_custom = 0",
+  );
   if (Number(count.rows[0]?.c || 0) > 0) return;
   const defaults = [
-    ["Email professionnel", "Email clair et poli", "Tu es un assistant de rédaction professionnel.", "Rédige un email en {{language}} avec un ton {{tone}} et longueur {{length}}.\nSujet: {{subject}}\nContexte: {{context}}"],
-    ["Rapport / Résumé documentaire", "Synthèse structurée", "Tu crées des rapports professionnels synthétiques.", "Crée un rapport en {{language}} (ton {{tone}}, longueur {{length}}) à partir de:\n{{context}}"],
-    ["Post LinkedIn", "Post engageant", "Tu es copywriter LinkedIn B2B.", "Rédige un post LinkedIn en {{language}} (ton {{tone}}, longueur {{length}}) sur:\n{{context}}"],
-    ["Note interne", "Communication interne", "Tu rédiges des notes internes claires et actionnables.", "Rédige une note interne en {{language}} (ton {{tone}}, longueur {{length}}) à partir de:\n{{context}}"],
+    [
+      "Email professionnel",
+      "Email clair et poli",
+      "Tu es un assistant de rédaction professionnel.",
+      "Rédige un email en {{language}} avec un ton {{tone}} et longueur {{length}}.\nSujet: {{subject}}\nContexte: {{context}}",
+    ],
+    [
+      "Rapport / Résumé documentaire",
+      "Synthèse structurée",
+      "Tu crées des rapports professionnels synthétiques.",
+      "Crée un rapport en {{language}} (ton {{tone}}, longueur {{length}}) à partir de:\n{{context}}",
+    ],
+    [
+      "Post LinkedIn",
+      "Post engageant",
+      "Tu es copywriter LinkedIn B2B.",
+      "Rédige un post LinkedIn en {{language}} (ton {{tone}}, longueur {{length}}) sur:\n{{context}}",
+    ],
+    [
+      "Note interne",
+      "Communication interne",
+      "Tu rédiges des notes internes claires et actionnables.",
+      "Rédige une note interne en {{language}} (ton {{tone}}, longueur {{length}}) à partir de:\n{{context}}",
+    ],
   ];
   for (const [name, description, sp, up] of defaults) {
     await query(
       `INSERT INTO ai_templates
        (name, description, system_prompt, user_prompt_template, language, tone, length, is_custom, created_by)
        VALUES (?, ?, ?, ?, 'FR', 'professionnel', 'moyen', 0, ?)`,
-      [name, description, sp, up, userId]
+      [name, description, sp, up, userId],
     );
   }
 }
 
 module.exports = {
   DEFAULT_MODEL,
+  IA_PROVIDER,
+  getAiProvider,
+  assertOpenAIKey,
+  resolveChatModel,
   applyTemplate,
   callOpenAI,
   recordGeneration,

@@ -214,14 +214,19 @@ router.post("/templates", authenticate, requireAdmin, async (req, res, next) => 
 
 router.put("/templates/:id", authenticate, requireAdmin, async (req, res, next) => {
   try {
+    const workflowId = Number(req.params.id);
+    const existing = await query(`SELECT id FROM workflows WHERE id = ? LIMIT 1`, [workflowId]);
+    if (!existing.rowCount) {
+      return res.status(404).json({ success: false, message: "Modèle de workflow introuvable" });
+    }
     const { name, description, documentCategory, steps = [] } = req.body;
     await query(
       `UPDATE workflows
        SET name = ?, description = ?, document_category = ?
        WHERE id = ?`,
-      [name, description || null, documentCategory || null, req.params.id]
+      [name, description || null, documentCategory || null, workflowId]
     );
-    await query("DELETE FROM workflow_steps WHERE workflow_id = ?", [req.params.id]);
+    await query("DELETE FROM workflow_steps WHERE workflow_id = ?", [workflowId]);
     for (let i = 0; i < steps.length; i += 1) {
       const step = normalizeTemplateStep(steps[i], i);
       await assertTemplateStepAssignee(step);
@@ -229,7 +234,7 @@ router.put("/templates/:id", authenticate, requireAdmin, async (req, res, next) 
         `INSERT INTO workflow_steps (workflow_id, step_order, assignee_type, assignee_id, due_hours, reminder_hours)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [
-          req.params.id,
+          workflowId,
           step.stepOrder,
           step.assigneeType,
           step.assigneeId,
@@ -246,8 +251,24 @@ router.put("/templates/:id", authenticate, requireAdmin, async (req, res, next) 
 
 router.delete("/templates/:id", authenticate, requireAdmin, async (req, res, next) => {
   try {
-    await query("DELETE FROM workflows WHERE id = ?", [req.params.id]);
-    return res.json({ success: true, message: "Workflow template deleted" });
+    const workflowId = Number(req.params.id);
+    const existing = await query(`SELECT id, name FROM workflows WHERE id = ? LIMIT 1`, [workflowId]);
+    if (!existing.rowCount) {
+      return res.status(404).json({ success: false, message: "Modèle de workflow introuvable" });
+    }
+    const instances = await query(
+      `SELECT COUNT(*) AS c FROM workflow_instances WHERE workflow_id = ?`,
+      [workflowId]
+    );
+    const instanceCount = Number(instances.rows[0]?.c || 0);
+    if (instanceCount > 0) {
+      return res.status(409).json({
+        success: false,
+        message: `Ce modèle est utilisé par ${instanceCount} instance(s) de workflow. Terminez-les ou choisissez un autre modèle avant suppression.`,
+      });
+    }
+    await query("DELETE FROM workflows WHERE id = ?", [workflowId]);
+    return res.json({ success: true, message: "Modèle de workflow supprimé" });
   } catch (error) {
     return next(error);
   }

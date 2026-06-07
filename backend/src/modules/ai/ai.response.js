@@ -1,12 +1,21 @@
 const env = require("../../config/env");
 
-const OPENAI_KEY = String(env.ai?.openaiApiKey || process.env.OPENAI_API_KEY || "").trim();
+const IA_PROVIDER = String(env.ai?.provider || process.env.IA_PROVIDER || "gemini")
+  .trim()
+  .toLowerCase();
+const OPENAI_KEY = String(
+  env.ai?.openaiApiKey || process.env.OPENAI_API_KEY || "",
+).trim();
+const GEMINI_KEY = String(
+  env.ai?.geminiApiKey || process.env.GEMINI_API_KEY || "",
+).trim();
 
 function aiSourceLabel(model) {
   const m = String(model || "");
-  if (m.includes("demo") || m === "demo-heuristic") return "demo";
+  if (m.includes("heuristic") || m.includes("regex")) return "nlp";
+  if (m.includes("gemini") || (IA_PROVIDER === "gemini" && GEMINI_KEY)) return "gemini";
   if (OPENAI_KEY) return "openai";
-  return "demo";
+  return "unavailable";
 }
 
 function buildAiResponse(data, meta = {}) {

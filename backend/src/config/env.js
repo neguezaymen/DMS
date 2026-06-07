@@ -12,8 +12,10 @@ const env = {
    */
   databaseUrl: process.env.DATABASE_URL || "",
   jwt: {
-    accessSecret: process.env.JWT_ACCESS_SECRET || "dev_access_secret_change_me",
-    refreshSecret: process.env.JWT_REFRESH_SECRET || "dev_refresh_secret_change_me",
+    accessSecret:
+      process.env.JWT_ACCESS_SECRET || "dev_access_secret_change_me",
+    refreshSecret:
+      process.env.JWT_REFRESH_SECRET || "dev_refresh_secret_change_me",
     accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "15m",
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
   },
@@ -36,9 +38,15 @@ const env = {
     pass: process.env.SMTP_PASS || "",
   },
   ai: {
+    provider: (process.env.IA_PROVIDER || "gemini").toLowerCase(),
     openaiApiKey: process.env.OPENAI_API_KEY || "",
-    dailyLimit: Number(process.env.IA_DAILY_LIMIT || 50),
-    defaultModel: process.env.IA_MODEL || "gpt-3.5-turbo",
+    geminiApiKey: process.env.GEMINI_API_KEY || "",
+    dailyLimit: Number(process.env.IA_DAILY_LIMIT || 300),
+    defaultModel:
+      process.env.IA_MODEL ||
+      (String(process.env.IA_PROVIDER || "gemini").toLowerCase() === "openai"
+        ? "gpt-4.1-nano"
+        : "gemini-2.5-flash-lite"),
   },
 };
 

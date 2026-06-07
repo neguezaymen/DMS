@@ -5,6 +5,7 @@ const { buildModernTextPdf } = require("../documents/demo-document-builder");
 const {
   assertQuota,
   callOpenAI,
+  resolveChatModel,
   recordGeneration,
 } = require("./ai.service");
 
@@ -250,7 +251,7 @@ async function generateBatchZip({ userId, rows, templateId, templateKind, model 
 
   await assertQuota(userId);
   const tpl = await resolveTemplate({ templateId, templateKind });
-  const chosenModel = model || "gpt-3.5-turbo";
+  const chosenModel = resolveChatModel(model);
   const files = [];
 
   for (let i = 0; i < limited.length; i += 1) {

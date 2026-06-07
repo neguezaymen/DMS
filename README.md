@@ -10,7 +10,7 @@ Plateforme de gestion documentaire avec workflows de validation, recherche intel
 
 - Node.js 20+
 - Compte PostgreSQL (ex. [Neon](https://neon.tech))
-- _(Optionnel)_ Clé OpenAI pour embeddings / chat IA (sinon mode démo local)
+- Clé **Google Gemini** (`GEMINI_API_KEY`) — recommandé, modèle économique `gemini-2.5-flash-lite`
 
 ---
 
@@ -47,9 +47,9 @@ cd backend
 npm run db:demo-docs
 ```
 
-> Sans clé `OPENAI_API_KEY`, l’IA fonctionne en **mode démo heuristique** (réponses locales, pas d’appel API).
+> Configurez `IA_PROVIDER=gemini` + `GEMINI_API_KEY` (ou `openai` + `OPENAI_API_KEY`). Sans clé valide, les routes `/ai-studio` renvoient **503**.
 
-Si vous avez seulement fait `db:setup` / `db:seed` et que l’IA renvoie peu de résultats, lancez `db:demo-docs` avant de tester.
+Si vous avez seulement fait `db:setup` / `db:seed` et que l’IA renvoie peu de résultats, lancez `db:demo-docs` puis `npm run reindex:embeddings`.
 
 ---
 
@@ -70,23 +70,23 @@ Si vous avez seulement fait `db:setup` / `db:seed` et que l’IA renvoie peu de 
 
 **9 fichiers** générés automatiquement (visibles en tant qu’admin, propriétaire `admin@dms.local`) :
 
-| Document | Catégorie | Intérêt pour les tests IA |
-| -------- | --------- | ------------------------- |
-| Rapport de stage — Sahar Neguez | Rapport | Q&R corpus, résumé, stack React/Node/PostgreSQL |
-| Contrat d'alternance 2025-2026 | Contrat | Workflow contrat, contrat « propre » (signature OK) |
-| **Contrat prestation — clauses sensibles** | Contrat | Conformité : pénalité, non-concurrence, résiliation unilatérale |
-| Facture Attijari Bank | Facture | Extraction métadonnées (montant, client, n° doc, échéance) |
-| **Facture Attijari (doublon)** | Facture | Déduplication / alertes documents similaires |
-| Lettre de motivation — Syrine | Lettre | Candidature RH, champ `Poste` |
-| Dossier candidature — Jean Dupont | Candidature | Champs `Candidat` + `Poste`, workflow RH → Manager |
-| Devis commercial Telnet | Devis | Routage workflow devis, montants TTC |
-| **Politique de rétention RGPD** | Conformité | Scan conformité RGPD, Q&R politique / rétention |
+| Document                                   | Catégorie   | Intérêt pour les tests IA                                       |
+| ------------------------------------------ | ----------- | --------------------------------------------------------------- |
+| Rapport de stage — Sahar Neguez            | Rapport     | Q&R corpus, résumé, stack React/Node/PostgreSQL                 |
+| Contrat d'alternance 2025-2026             | Contrat     | Workflow contrat, contrat « propre » (signature OK)             |
+| **Contrat prestation — clauses sensibles** | Contrat     | Conformité : pénalité, non-concurrence, résiliation unilatérale |
+| Facture Attijari Bank                      | Facture     | Extraction métadonnées (montant, client, n° doc, échéance)      |
+| **Facture Attijari (doublon)**             | Facture     | Déduplication / alertes documents similaires                    |
+| Lettre de motivation — Syrine              | Lettre      | Candidature RH, champ `Poste`                                   |
+| Dossier candidature — Jean Dupont          | Candidature | Champs `Candidat` + `Poste`, workflow RH → Manager              |
+| Devis commercial Telnet                    | Devis       | Routage workflow devis, montants TTC                            |
+| **Politique de rétention RGPD**            | Conformité  | Scan conformité RGPD, Q&R politique / rétention                 |
 
 Les PDF/DOCX contiennent des libellés explicites (`Client:`, `Montant TTC:`, `Candidat:`, `Poste:`, `Échéance:`) pour l’enrichissement automatique des métadonnées et des champs personnalisés.
 
 ---
 
-## Tests IA (mode démo)
+## Tests IA (Gemini recommandé)
 
 Connexion : **`admin@dms.local`** / **`Admin123!`** → menu **Hub IA** (`/ai`).
 
@@ -103,16 +103,16 @@ node scripts/reset-ai-quota.js
 
 ### Parcours de test
 
-| Fonctionnalité | Route | Comment tester |
-| -------------- | ----- | -------------- |
-| **Hub IA** | `/ai` | Vue d’ensemble des 8 tuiles (studio, conformité, Q&R, métadonnées, routage…) |
-| **Conformité** | `/ai/compliance` | Scan corpus → alertes PII (emails/téléphones), clauses sensibles sur le contrat risque |
-| **Q&R corpus** | `/ai/corpus-qa` | Sélectionner plusieurs docs, poser une question (voir exemples ci-dessous) |
-| **Métadonnées batch** | `/ai/metadata` | Enrichir factures/devis ; cocher « appliquer aux champs personnalisés » |
-| **Routage workflow** | `/ai/workflow-routing` | Recommandations par catégorie (ex. Devis → validation commerciale) |
-| **Assistant document** | Fiche doc → onglet **Assistant IA** | Résumé, chat, extraction métadonnées sur un document |
-| **Insights upload** | Liste documents → upload | Classification + doublon probable si facture proche Attijari |
-| **AI Studio / Batch** | Hub IA → liens studio | Génération contrat, facture, rapport (mode démo sans clé OpenAI) |
+| Fonctionnalité         | Route                               | Comment tester                                                                         |
+| ---------------------- | ----------------------------------- | -------------------------------------------------------------------------------------- |
+| **Hub IA**             | `/ai`                               | Vue d’ensemble des 8 tuiles (studio, conformité, Q&R, métadonnées, routage…)           |
+| **Conformité**         | `/ai/compliance`                    | Scan corpus → alertes PII (emails/téléphones), clauses sensibles sur le contrat risque |
+| **Q&R corpus**         | `/ai/corpus-qa`                     | Sélectionner plusieurs docs, poser une question (voir exemples ci-dessous)             |
+| **Métadonnées batch**  | `/ai/metadata`                      | Enrichir factures/devis ; cocher « appliquer aux champs personnalisés »                |
+| **Routage workflow**   | `/ai/workflow-routing`              | Recommandations par catégorie (ex. Devis → validation commerciale)                     |
+| **Assistant document** | Fiche doc → onglet **Assistant IA** | Résumé, chat, extraction métadonnées sur un document                                   |
+| **Insights upload**    | Liste documents → upload            | Classification + doublon probable si facture proche Attijari                           |
+| **AI Studio / Batch**  | Hub IA → liens studio               | Génération contrat, facture, rapport via OpenAI                                        |
 
 ### Questions Q&R corpus (exemples)
 
@@ -124,13 +124,13 @@ node scripts/reset-ai-quota.js
 
 ### Résultats attendus (conformité)
 
-| Document | Alertes typiques |
-| -------- | ---------------- |
-| Facture Attijari / doublon | Email, IBAN (PII) |
-| Contrat prestation risque | Clauses sensibles (pénalité, non-concurrence…) |
-| Politique RGPD | Email DPO |
-| Devis Telnet | Téléphone contact |
-| Contrat alternance | Score élevé (peu ou pas d’alerte) |
+| Document                   | Alertes typiques                               |
+| -------------------------- | ---------------------------------------------- |
+| Facture Attijari / doublon | Email, IBAN (PII)                              |
+| Contrat prestation risque  | Clauses sensibles (pénalité, non-concurrence…) |
+| Politique RGPD             | Email DPO                                      |
+| Devis Telnet               | Téléphone contact                              |
+| Contrat alternance         | Score élevé (peu ou pas d’alerte)              |
 
 ### Champs personnalisés (métadonnées)
 
@@ -169,18 +169,18 @@ L’admin peut agir à toutes les étapes sans changer de compte.
 
 ## Scripts backend utiles
 
-| Commande                      | Description                                            |
-| ----------------------------- | ------------------------------------------------------ |
-| `npm run dev`                 | API en mode développement (nodemon)                    |
-| `npm run start`               | API production                                         |
-| `npm run db:init`             | Initialiser le schéma PostgreSQL                       |
-| `npm run db:seed`             | Rôles, 3 comptes démo, workflows, documents            |
-| `npm run db:setup`            | `db:init` + `db:seed`                                  |
-| `npm run db:seed-candidature` | Workflow candidature Dupont + instance en attente RH   |
-| `npm run db:demo-docs`        | Régénérer les 9 documents démo + extraction texte + embeddings |
-| `npm run reindex:embeddings`  | Réindexer les embeddings (recherche vectorielle)               |
-| `node scripts/reset-ai-quota.js` | Remettre à zéro quotas / historique IA générative           |
-| `npm run test`                | Tests Jest                                             |
+| Commande                         | Description                                                    |
+| -------------------------------- | -------------------------------------------------------------- |
+| `npm run dev`                    | API en mode développement (nodemon)                            |
+| `npm run start`                  | API production                                                 |
+| `npm run db:init`                | Initialiser le schéma PostgreSQL                               |
+| `npm run db:seed`                | Rôles, 3 comptes démo, workflows, documents                    |
+| `npm run db:setup`               | `db:init` + `db:seed`                                          |
+| `npm run db:seed-candidature`    | Workflow candidature Dupont + instance en attente RH           |
+| `npm run db:demo-docs`           | Régénérer les 9 documents démo + extraction texte + embeddings |
+| `npm run reindex:embeddings`     | Réindexer les embeddings (recherche vectorielle)               |
+| `node scripts/reset-ai-quota.js` | Remettre à zéro quotas / historique IA générative              |
+| `npm run test`                   | Tests Jest                                                     |
 
 ---
 
@@ -204,7 +204,11 @@ Copier `backend/.env.example` vers `backend/.env` :
 | `DATABASE_URL`                             | URL PostgreSQL (Neon)                                            |
 | `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | Secrets JWT                                                      |
 | `FRONTEND_URL`                             | Origine CORS (défaut `http://localhost:5173`)                    |
-| `OPENAI_API_KEY`                           | _(Optionnel)_ Embeddings + chat IA                               |
+| `IA_PROVIDER`                              | `gemini` (défaut) ou `openai`                                      |
+| `GEMINI_API_KEY`                           | Clé Google AI Studio (recommandé)                                  |
+| `IA_MODEL`                                 | Modèle économique : `gemini-2.5-flash-lite`                        |
+| `IA_DAILY_LIMIT`                           | Quota IA par utilisateur / jour (défaut **300**)                   |
+| `OPENAI_API_KEY`                           | Si `IA_PROVIDER=openai`                                            |
 | `SMTP_*`                                   | _(Optionnel)_ Envoi d’emails (reset mot de passe, notifications) |
 
 Le frontend appelle l’API sur `http://localhost:3000/api/v1` par défaut (`VITE_API_URL` pour surcharger).
