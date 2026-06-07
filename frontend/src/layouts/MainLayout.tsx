@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { NavLink, Outlet, Link, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, Link, useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Bell,
@@ -19,6 +19,7 @@ import {
   Settings,
   ChevronDown,
   Search,
+  X,
   type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '../state/AuthContext'
@@ -51,6 +52,7 @@ import {
   SidebarProvider,
   SidebarRail,
   SidebarTrigger,
+  useSidebar,
 } from '@/components/shadcn/sidebar'
 import { Separator } from '@/components/shadcn/separator'
 import {
@@ -128,9 +130,19 @@ function userInitials(name?: string | null) {
 }
 
 export default function MainLayout() {
+  return (
+    <SidebarProvider>
+      <MainLayoutShell />
+    </SidebarProvider>
+  )
+}
+
+function MainLayoutShell() {
   const { t } = useTranslation()
   const { user, logout, isAdmin } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
+  const { isMobile, setOpenMobile } = useSidebar()
   const [unreadCount, setUnreadCount] = useState(0)
   const [commandOpen, setCommandOpen] = useState(false)
 
@@ -164,6 +176,10 @@ export default function MainLayout() {
   }, [])
 
   useEffect(() => {
+    setOpenMobile(false)
+  }, [location.pathname, setOpenMobile])
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
@@ -182,11 +198,23 @@ export default function MainLayout() {
   }
 
   return (
-    <SidebarProvider>
+    <>
       <PageHead />
       <Sidebar collapsible="icon" className="border-r">
-        <SidebarHeader>
-          <AppLogo to="/dashboard" size="sm" className="px-2 py-1.5" />
+        <SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-sidebar-border px-2 py-2 md:border-0">
+          <AppLogo to="/dashboard" size="sm" className="min-w-0 px-1 py-1.5" showSubtitle={!isMobile} />
+          {isMobile ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              aria-label={t('layout.closeMenu')}
+              onClick={() => setOpenMobile(false)}
+            >
+              <X className="size-4" />
+            </Button>
+          ) : null}
         </SidebarHeader>
         <SidebarContent>
           {sections.map((sec) => (
@@ -199,6 +227,9 @@ export default function MainLayout() {
                       <NavLink
                         to={item.to}
                         end={item.to === '/dashboard'}
+                        onClick={() => {
+                          if (isMobile) setOpenMobile(false)
+                        }}
                         className={({ isActive }) =>
                           cn(
                             'block w-full',
@@ -226,12 +257,25 @@ export default function MainLayout() {
         <SidebarRail />
       </Sidebar>
 
-      <SidebarInset>
-        <header className="sticky top-0 z-20 flex h-14 w-full items-center gap-2 border-b bg-background/80 px-3 backdrop-blur supports-backdrop-filter:bg-background/60 md:px-4">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <SidebarTrigger className="-ml-1 shrink-0" />
-            <Separator orientation="vertical" className="mx-1 hidden h-5 sm:block" />
+      <SidebarInset className="min-w-0 overflow-x-hidden">
+        <header className="sticky top-0 z-20 flex h-14 w-full min-w-0 items-center gap-1 border-b bg-background/80 px-2 backdrop-blur supports-backdrop-filter:bg-background/60 sm:gap-2 sm:px-3 md:px-4">
+          <SidebarTrigger className="-ml-0.5 shrink-0" />
+
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-9 shrink-0 sm:hidden"
+            aria-label={t('searchBar.placeholder')}
+            onClick={() => setCommandOpen(true)}
+          >
+            <Search className="size-4" />
+          </Button>
+
+          <div className="hidden min-w-0 flex-1 items-center gap-2 sm:flex">
+            <Separator orientation="vertical" className="mx-1 h-5" />
             <Button
+              type="button"
               variant="outline"
               size="sm"
               className="h-9 min-w-0 w-full max-w-md justify-start gap-2 text-muted-foreground"
@@ -239,7 +283,7 @@ export default function MainLayout() {
             >
               <Search className="size-4 shrink-0" />
               <span className="truncate">{t('searchBar.placeholder')}</span>
-              <kbd className="ml-auto hidden rounded border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground sm:inline">
+              <kbd className="ml-auto hidden rounded border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground md:inline">
                 ⌘K
               </kbd>
             </Button>
@@ -271,16 +315,16 @@ export default function MainLayout() {
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="h-9 gap-2 pl-1.5 pr-2">
-                  <Avatar className="size-7">
+                <Button variant="ghost" size="sm" className="h-9 gap-2 px-1.5 sm:px-2">
+                  <Avatar className="size-7 shrink-0">
                     <AvatarFallback className="bg-primary text-xs font-medium text-primary-foreground">
                       {userInitials(user?.fullName)}
                     </AvatarFallback>
                   </Avatar>
-                  <span className="hidden max-w-[160px] truncate text-sm font-medium md:inline">
+                  <span className="hidden max-w-[8rem] truncate text-sm font-medium lg:inline xl:max-w-[10rem]">
                     {user?.fullName || t('common.user')}
                   </span>
-                  <ChevronDown className="hidden size-3.5 text-muted-foreground md:inline" />
+                  <ChevronDown className="hidden size-3.5 shrink-0 text-muted-foreground lg:inline" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
@@ -315,15 +359,15 @@ export default function MainLayout() {
           </div>
         </header>
 
-        <div className="border-b bg-background px-4 py-2.5 md:px-6">
+        <div className="min-w-0 overflow-x-auto border-b bg-background px-3 py-2 sm:px-4 sm:py-2.5 md:px-6">
           <AppBreadcrumb />
         </div>
 
-        <main className="flex-1 overflow-y-auto px-4 py-6 md:px-6 lg:px-8">
+        <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-4 sm:px-4 sm:py-6 md:px-6 lg:px-8">
           <Outlet />
         </main>
 
-        <footer className="border-t bg-background px-4 py-3 text-xs text-muted-foreground md:px-6">
+        <footer className="border-t bg-background px-3 py-3 text-xs text-muted-foreground sm:px-4 md:px-6">
           <div className="flex flex-wrap items-center gap-1.5">
             <span>{t('layout.footerCopyright', { year: new Date().getFullYear() })}</span>
             <span>·</span>
@@ -357,6 +401,6 @@ export default function MainLayout() {
           ))}
         </CommandList>
       </CommandDialog>
-    </SidebarProvider>
+    </>
   )
 }

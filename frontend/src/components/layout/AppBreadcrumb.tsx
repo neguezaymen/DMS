@@ -103,11 +103,13 @@ export default function AppBreadcrumb() {
   const trail = trailForPath(pathname, params, t, searchParams.get('tab'))
 
   return (
-    <Breadcrumb>
-      <BreadcrumbList>
+    <Breadcrumb className="min-w-0">
+      <BreadcrumbList className="min-w-0">
         <BreadcrumbItem>
           {pathname === '/dashboard' ? (
-            <BreadcrumbPage>{t('nav.dashboard')}</BreadcrumbPage>
+            <BreadcrumbPage className="max-w-[10rem] truncate sm:max-w-none sm:whitespace-normal">
+              {t('nav.dashboard')}
+            </BreadcrumbPage>
           ) : (
             <BreadcrumbLink asChild>
               <Link to="/dashboard">{t('nav.dashboard')}</Link>
@@ -119,7 +121,9 @@ export default function AppBreadcrumb() {
             <BreadcrumbSeparator />
             <BreadcrumbItem>
               {seg.current ? (
-                <BreadcrumbPage>{seg.label}</BreadcrumbPage>
+                <BreadcrumbPage className="max-w-[10rem] truncate sm:max-w-none sm:whitespace-normal">
+                  {seg.label}
+                </BreadcrumbPage>
               ) : (
                 <BreadcrumbLink asChild>
                   <Link to={seg.to}>{seg.label}</Link>
